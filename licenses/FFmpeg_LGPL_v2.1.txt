@@ -1,0 +1,24 @@
+FFmpeg - GNU Lesser General Public License v2.1 or later (LGPL-2.1+)
+
+This software uses FFmpeg libraries, licensed under the GNU Lesser General
+Public License v2.1 or later.
+
+FFmpeg is a collection of libraries and tools to process multimedia content.
+Copyright (c) 2000-2026 the FFmpeg developers.
+
+This build uses the LGPL version of FFmpeg (no GPL components enabled).
+The following libraries are dynamically linked:
+- libavcodec
+- libavformat
+- libavutil
+- libavdevice
+- libavfilter
+- libswscale
+- libswresample
+
+The full text of the LGPL-2.1 license is available at:
+https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+
+FFmpeg source code is available at: https://ffmpeg.org/download.html
+This specific build: BtbN FFmpeg-Builds (LGPL shared)
+https://github.com/BtbN/FFmpeg-Builds
