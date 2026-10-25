@@ -129,6 +129,11 @@ add_custom_command(TARGET unit_tests POST_BUILD
     $<TARGET_FILE_DIR:unit_tests>
 )
 
+# 10. 软解上传链路探针：不需要窗口和视频文件，直接验证 NV12 上传->拷贝->采样->回读
+add_executable(d3d11_probe tools/d3d11_probe.cpp)
+target_link_libraries(d3d11_probe PRIVATE d3d11 dxgi d3dcompiler)
+add_test(NAME d3d11_probe COMMAND d3d11_probe)
+
 add_test(NAME unit_tests COMMAND unit_tests)
 # 测试进程要能加载 Qt6Core.dll：从 Qt 安装目录取 bin 路径注入 PATH
 get_target_property(_qt_core_loc Qt6::Core IMPORTED_LOCATION_DEBUG)

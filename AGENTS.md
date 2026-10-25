@@ -1,4 +1,4 @@
-# AGENTS.md — 本仓库的工作约定
+﻿# AGENTS.md — 本仓库的工作约定
 
 给"下一个进入这个仓库的人/模型"看的。先读本文件，再读 `PROGRESS.md`，最后按需读 `docs/`。
 
@@ -27,6 +27,7 @@ cmake --build build --config Debug -j 8
 - D3D11 设备引用计数：自建设备交给 FFmpeg 的 `AVHWDeviceContext` 前必须 `AddRef()`，FFmpeg 的 `d3d11va_device_uninit` 会无条件 Release。
 - 条件变量：置停止标志必须在对应 mutex 内，再 `wakeAll()`，否则 worker 丢唤醒后会永久 `wait()`。
 - 注释写"为什么"，不写"是什么"；中文注释，ASCII 标点。
+- **NV12 纹理不能用 `D3D11_USAGE_DYNAMIC`**：`CreateTexture2D` 会返回 `E_INVALIDARG(0x80070057)`，软解一帧都上传不了、表现为"有声音黑屏"。CPU 上传只能走 `D3D11_USAGE_STAGING` + `Map(D3D11_MAP_WRITE)`，再 `CopySubresourceRegion` 到池里的 DEFAULT 纹理。改这块先跑 `build\Debug\d3d11_probe.exe`。
 - **日志消息用英文/ASCII**：`LOG_*` 宏走 `QString::asprintf` 的 `%s`，中文会按 GBK 解码成乱码写进日志文件。注释可以中文，日志字符串不行。
 - 新增可在无 GUI 下验证的逻辑，优先放进 `translate_cli` 这类命令行入口，而不是只挂在按钮上。
 - 模型/资源路径不许硬拼 `../../third_party/`：走 `AppPaths::resolveResource()`（配置项 `ai/whisperModel`、`ai/translatorModel` 可覆盖）。

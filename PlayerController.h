@@ -1,4 +1,4 @@
-#ifndef PLAYERCONTROLLER_H
+﻿#ifndef PLAYERCONTROLLER_H
 #define PLAYERCONTROLLER_H
 
 #include <QObject>
@@ -138,7 +138,7 @@ private:
     ID3D11Device *m_d3d11Device = nullptr;           // 自创建D3D11设备（解码+显示共用）
     ID3D11DeviceContext *m_d3d11Context = nullptr;   // 自创建D3D11上下文
     // 软解上传中介
-    ID3D11Texture2D *m_swUploadTexture = nullptr;    // 动态NV12纹理（CPU可写，上传中介）
+    ID3D11Texture2D *m_swUploadTexture = nullptr;    // STAGING NV12 上传中介（NV12 不能用 DYNAMIC）
     SwsContext *m_swsCtx = nullptr;                  // YUV→NV12转换
     int m_swUploadW = 0, m_swUploadH = 0;
     bool m_hwDecodeRequested = true;   // 用户请求硬件解码（可配置）

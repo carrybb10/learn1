@@ -1,4 +1,4 @@
-#include "PlayerController.h"
+﻿#include "PlayerController.h"
 #include "D3D11Renderer.h"
 #include <QDebug>
 
@@ -639,8 +639,11 @@ bool PlayerController::ensureSwUploadTexture(int width, int height)
     desc.ArraySize = 1;
     desc.Format = DXGI_FORMAT_NV12;
     desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DYNAMIC;
-    desc.BindFlags = 0;  // 动态纹理不能作为SRV，仅作上传中介
+    // NV12 不支持 D3D11_USAGE_DYNAMIC：CreateTexture2D 直接返回 E_INVALIDARG(0x80070057)，
+    // 后果就是软解一帧都上传不了、画面全黑但声音正常（tools/d3d11_probe 可复现）。
+    // 只能用 STAGING 做 CPU 上传中介，再 CopySubresourceRegion 到池里的 DEFAULT 纹理供采样。
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.BindFlags = 0;
     desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     HRESULT hr = m_d3d11Device->CreateTexture2D(&desc, nullptr, &m_swUploadTexture);
     if (FAILED(hr)) {
@@ -680,7 +683,8 @@ bool PlayerController::uploadSoftwareFrame(AVFrame *frame, ID3D11Texture2D *&out
 
     // 3. Map动态纹理，写入NV12数据
     D3D11_MAPPED_SUBRESOURCE mapped;
-    HRESULT hr = m_d3d11Context->Map(m_swUploadTexture, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    // STAGING 纹理只能用 MAP_WRITE（DISCARD 仅对 DYNAMIC 有效）
+    HRESULT hr = m_d3d11Context->Map(m_swUploadTexture, 0, D3D11_MAP_WRITE, 0, &mapped);
     if (FAILED(hr)) { qWarning() << "[SW] Map failed:" << hr; return false; }
     // Y平面
     uint8_t *dst = (uint8_t*)mapped.pData;
