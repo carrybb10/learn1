@@ -1,6 +1,6 @@
 # PROGRESS
 
-> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-10-25（v0.4.7）
+> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-10-25（v0.4.8）
 
 ## 版本线
 
@@ -14,6 +14,7 @@
 | `v0.4.5` | ROADMAP v5：产品定位 + 18 条可验收需求 + M5-M9 路线 |
 | `v0.4.6` | M5 起步：模型路径配置化（AppPaths）、模型异步加载可 join、手动验收清单 |
 | `v0.4.7` | 纯函数单测（26 断言）+ ctest 入口 + 最小 CI 工作流（未实跑） |
+| `v0.4.8` | 软解黑屏修复（NV12 上传纹理改 STAGING）+ `d3d11_probe` 回归 + CI 首跑修复 |
 
 ## 本轮修掉的问题
 
@@ -34,6 +35,9 @@
 
 ## 仓库治理（GitHub）
 
+- **CI 已实跑通过**：`build` 工作流 run `40197215858`（tag `v0.4.8`）四步全绿——安装 Qt（aqt 6.10.3）→ 拉取依赖 → 全量 Debug 构建 → `ctest` 2/2，总耗时约 4 分钟（含第三方源码编译）。徽章：`https://github.com/carrybb10/learn1/actions/workflows/build.yml/badge.svg`。
+- 触发方式：手动 `workflow_dispatch` 或推 `v*` tag（普通 push 不触发，省额度）。
+
 - 远端 `carrybb10/learn1` 是公开仓库，默认分支 `main`，许可证 MIT，版本史用 tag `v0.4.x` 表示。
 - 分支 `main` 受 ruleset `protect-main`（id 25820797）保护：禁止删除、禁止 force push；绕过名单只有 repo admin，即仓库主人。
 - tag `refs/tags/v*` 受 `protect-tags`（id 25820800）保护：已发布的版本号不能被删除或移动。
@@ -45,10 +49,10 @@
 ## 已知问题 / 未验证
 
 1. seek 的**端到端**效果需要在 GUI 里手动回归（本轮只做了代码级修复 + 编译验证，没有跑视频）。
-2. 软解回退路径仍未充分端到端验证（硬解模式正常）。
+2. 软解回退路径已由 `tools/d3d11_probe.cpp` 覆盖（NV12 上传→拷贝→采样→回读亮度），但**没有用真实片源在 GUI 里端到端走过**；按当前判断它是兜底路径，不再作为发布阻塞项。
 3. 翻译对"中文目标 + 日语源"的简体/繁体倾向依赖模型自身，未做后处理归一。
 4. `main.cpp` 965 行、`PlayerController.cpp` 1251 行仍是单文件单类，拆分方案见 `docs/REFACTOR_PLAN.md`（未执行）。
-5. 自动化测试只覆盖纯函数（26 断言 / 0.13s）；播放链路仍靠 `docs/ACCEPTANCE.md` 手动回归。CI 工作流已写但**未在 Actions 上跑过一次**。
+5. 自动化测试覆盖纯函数 26 断言 + D3D11 纹理探针（ctest 2/2）；播放链路仍靠 `docs/ACCEPTANCE.md` 手动回归。CI 工作流已写但**未在 Actions 上跑过一次**。
 6. Silero VAD 只出现在许可清单与计划文档里，**未实现**；不要对外宣称有 VAD。
 
 ## 下一步（按 ROADMAP v5）
