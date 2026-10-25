@@ -18,12 +18,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Qt 6.12.0 (msvc2022_64)
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.12.0'
-          arch: 'win64_msvc2022_64'
-          cache: true
+      # Qt 6.12.0 / 6.11.x moved to a per-arch repository layout that the newest aqtinstall
+      # (3.3.0) still cannot resolve: it asks for qt6_6120/qt6_6120/Updates.xml, which is 404.
+      # So we install Qt ourselves and walk a short candidate list, newest resolvable first.
+      # qtbase is enough: the project only uses Core/Gui/Widgets.
+      - name: Install Qt
+        shell: pwsh
+        run: |
+          python -m pip install --quiet --disable-pip-version-check aqtinstall
+          $root = Join-Path $env:RUNNER_WORKSPACE 'Qt'
+          foreach ($v in @('6.10.3', '6.9.3', '6.8.3')) {
+            Write-Host "== trying Qt $v =="
+            python -m aqt install-qt windows desktop $v win64_msvc2022_64 --archives qtbase -O $root
+            if ($LASTEXITCODE -eq 0) { $picked = $v; break }
+            Write-Host "Qt $v not installable, falling back"
+          }
+          if (-not $picked) { throw "no installable Qt version" }
+          $qt6 = "$root/$picked/msvc2022_64/lib/cmake/Qt6"
+          if (-not (Test-Path "$qt6/Qt6Config.cmake")) { throw "Qt6Config.cmake missing under $qt6" }
+          "QT_VERSION=$picked" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "QT6_DIR=$qt6" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "using Qt $picked from $qt6"
 
       # third_party is ~2.5GB of sources/libs at pinned commits; cache it between runs.
       - name: Cache third_party
@@ -38,13 +53,13 @@ jobs:
 
       - name: Configure
         shell: pwsh
-        run: cmake -B build -A x64 -DQt6_DIR="$env:QT_ROOT_DIR/lib/cmake/Qt6"
+        run: cmake -B build -A x64 -DQt6_DIR="$env:QT6_DIR"
 
       - name: Build
         shell: pwsh
         run: cmake --build build --config Debug -j 4
 
-      - name: Unit tests
+      - name: Tests (unit + d3d11 probe)
         shell: pwsh
         run: ctest --test-dir build -C Debug --output-on-failure
 
