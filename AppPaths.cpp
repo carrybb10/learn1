@@ -39,8 +39,12 @@ QString resolveResource(const QString &settingsKey, const QStringList &relativeC
     g_lastTried.clear();
 
     // 1) 用户显式配置优先；配错了要明确告诉他，而不是静默回退到别的路径
-    QSettings settings("MediaPlayer", "Config");
-    const QString configured = settings.value(settingsKey).toString().trimmed();
+    // 空 key 跳过：QSettings 遇到空 key 会打 "Empty key passed" 告警（单测走这条路径）
+    QString configured;
+    if (!settingsKey.isEmpty()) {
+        QSettings settings("MediaPlayer", "Config");
+        configured = settings.value(settingsKey).toString().trimmed();
+    }
     if (!configured.isEmpty()) {
         QString path = configured;
         if (QFileInfo(path).isRelative())

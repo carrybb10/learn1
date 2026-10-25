@@ -88,6 +88,8 @@ add_executable(translate_cli
 target_include_directories(translate_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(translate_cli PRIVATE llama Qt6::Core)
 
+# 8.5 纯函数单元测试见文件末尾（依赖 LLAMA_DLLS 变量）
+
 # 7. 构建后自动拷贝FFmpeg、SDL2、whisper和llama的DLL到exe目录
 file(GLOB FFMPEG_DLLS ${FFMPEG_ROOT}/bin/*.dll)
 file(GLOB SDL2_DLLS ${SDL2_ROOT}/lib/*.dll)
@@ -110,3 +112,28 @@ add_custom_command(TARGET translate_cli POST_BUILD
     ${LLAMA_DLLS}
     $<TARGET_FILE_DIR:translate_cli>
 )
+
+# 9. 纯函数单元测试：不加载模型、不开窗口、不碰 D3D11，秒级返回
+enable_testing()
+add_executable(unit_tests
+    tests/unit_tests.cpp
+    Translator.cpp
+    AppPaths.cpp
+    Logger.cpp
+)
+target_include_directories(unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(unit_tests PRIVATE llama Qt6::Core)
+add_custom_command(TARGET unit_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${LLAMA_DLLS}
+    $<TARGET_FILE_DIR:unit_tests>
+)
+
+add_test(NAME unit_tests COMMAND unit_tests)
+# 测试进程要能加载 Qt6Core.dll：从 Qt 安装目录取 bin 路径注入 PATH
+get_target_property(_qt_core_loc Qt6::Core IMPORTED_LOCATION_DEBUG)
+if(NOT _qt_core_loc)
+    get_target_property(_qt_core_loc Qt6::Core IMPORTED_LOCATION_RELEASE)
+endif()
+get_filename_component(_qt_bin_dir "${_qt_core_loc}" DIRECTORY)
+set_tests_properties(unit_tests PROPERTIES ENVIRONMENT "PATH=${_qt_bin_dir};$ENV{PATH}")
