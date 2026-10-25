@@ -29,8 +29,18 @@
 
 - 构建：`cmake --build build --config Debug -j 8` 通过，无新增告警（既有 `MSB8027` 来自 llama.cpp 同名源文件，可忽略）。
 - 翻译回归：`translate_cli` + `tests/translate_samples.txt`，中文/英语/日语/韩语四向各 7/7 非空，单句 1.1–1.8 秒，无空译、无第二语言行。
-- 需求达成（对照 ROADMAP v5）：M1–M3 完成；M4 除"AI 字幕端到端体验"外完成；M5 进行中（D-02 模型路径配置化、ACCEPTANCE 清单已完成，长跑/软解/单测/CI 未开始）。
+- 需求达成（对照 ROADMAP v5）：M1–M3 完成；M4 除"AI 字幕端到端体验"外完成；M5 进行中（已完成：D-02 模型路径配置化、ACCEPTANCE 清单、纯函数单测、CI 工作流与依赖脚本；未完成：2 小时长跑、软解端到端、CI 实跑）。
 - 模型定位：启动日志会打印 `resource ai/whisperModel found at: ...`；配置项 `ai/whisperModel`/`ai/translatorModel` 可覆盖，便携包把模型放 `models/` 即可被优先命中。
+
+## 仓库治理（GitHub）
+
+- 远端 `carrybb10/learn1` 是公开仓库，默认分支 `main`，许可证 MIT，版本史用 tag `v0.4.x` 表示。
+- 分支 `main` 受 ruleset `protect-main`（id 25820797）保护：禁止删除、禁止 force push；绕过名单只有 repo admin，即仓库主人。
+- tag `refs/tags/v*` 受 `protect-tags`（id 25820800）保护：已发布的版本号不能被删除或移动。
+- Actions 里的 `GITHUB_TOKEN` 已降为只读（`default_workflow_permissions=read`，且不允许自动批准 PR），工作流被外部 PR 篡改也推不动仓库。
+- 加固脚本 `scripts/harden-repo.ps1` 幂等可重跑；换仓库只需改 `-Owner` / `-Repo`。
+- 仍需人工确认三件事（仓库设置替代不了）：账号开 2FA、Collaborators 保持只有自己、Actions 里把外部 Fork PR 设为需审批。
+- 环境坑：本机 WinINET 代理设成 `http://127.0.0.1:65532` 时，.NET 的 `Invoke-RestMethod` 连不上 GitHub（超时或"基础连接已关闭"），而 `curl.exe` 直连正常。访问 GitHub 的脚本一律走 curl，别用 `Invoke-RestMethod`。
 
 ## 已知问题 / 未验证
 
