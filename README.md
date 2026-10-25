@@ -33,14 +33,25 @@ demuxLoop ──► 音频包队列 ──► audioDecodeLoop ──► 音频�
 
 ```powershell
 git clone <this-repo> Player && cd Player
-.\scripts\fetch-deps.ps1            # 拉取 FFmpeg / SDL2 / llama.cpp / whisper.cpp 与模型
+powershell -ExecutionPolicy Bypass -File .\scripts\fetch-deps.ps1   # 拉取 FFmpeg / SDL2 / llama.cpp / whisper.cpp 与模型
 cmake -B build -G "Visual Studio 18 2026" -A x64 -DQt6_DIR="C:/Qt/6.12.0/msvc2022_64/lib/cmake/Qt6"
 cmake --build build --config Release -j 8
 C:\Qt\6.12.0\msvc2022_64\bin\windeployqt.exe build\Release\MediaPlayer.exe
 .\build\Release\MediaPlayer.exe
 ```
 
-依赖版本固化在 [`docs/THIRD_PARTY_VERSIONS.md`](docs/THIRD_PARTY_VERSIONS.md)。
+模型不入仓库：把 `Hy-MT2-1.8B-Q4_K_M.gguf` 放进 `third_party/models/`，或把模型放在 exe 旁的 `models/` 目录（便携形态），
+也可以用配置项 `ai/translatorModel` / `ai/whisperModel` 指定绝对路径。启动日志会打印最终命中的路径。
+
+单元测试（不需要模型和显卡）：
+
+```powershell
+cmake --build build --config Debug --target unit_tests -j 8
+ctest --test-dir build -C Debug --output-on-failure
+```
+
+依赖版本固化在 [`docs/THIRD_PARTY_VERSIONS.md`](docs/THIRD_PARTY_VERSIONS.md)。CI 状态：
+[![build](https://github.com/carrybb10/learn1/actions/workflows/build.yml/badge.svg)](https://github.com/carrybb10/learn1/actions/workflows/build.yml)
 
 ## 操作
 
