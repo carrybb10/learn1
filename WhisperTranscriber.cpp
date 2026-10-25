@@ -9,10 +9,23 @@ WhisperTranscriber::WhisperTranscriber(QObject *parent)
 
 WhisperTranscriber::~WhisperTranscriber()
 {
+    // 必须先取消并 join 工作线程：否则 whisper_free 之后 whisper_full 仍在读取已释放的 ctx
+    cancel();
+    if (m_worker) {
+        m_worker->wait();
+        delete m_worker;
+        m_worker = nullptr;
+    }
+    QMutexLocker locker(&m_mutex);
     if (m_whisperCtx) {
         whisper_free(m_whisperCtx);
         m_whisperCtx = nullptr;
     }
+}
+
+bool WhisperTranscriber::abortCallback(void *userData)
+{
+    return static_cast<WhisperTranscriber*>(userData)->m_cancelled.load();
 }
 
 bool WhisperTranscriber::loadModel(const QString &modelPath)
@@ -51,8 +64,7 @@ QVector<TranscriptSegment> WhisperTranscriber::transcribe(const QVector<float> &
         return result;
     }
 
-    m_cancelled = false;
-
+    QMutexLocker locker(&m_mutex);   // 与 loadModel / 析构互斥，避免 ctx 被并发释放
     qDebug() << "[Whisper] 准备识别，样本数:" << samples.size()
              << "时长:" << (float)samples.size() / 16000.0f << "秒";
 
@@ -87,6 +99,9 @@ QVector<TranscriptSegment> WhisperTranscriber::transcribe(const QVector<float> &
     params.n_threads = 4;
     params.no_context = true;
     params.single_segment = false;
+    // 让 whisper_full 能在 cancel()/析构时提前返回（原本只能整段跑完）
+    params.abort_callback = &WhisperTranscriber::abortCallback;
+    params.abort_callback_user_data = this;
 
     qDebug() << "[Whisper] 调用 whisper_full...";
     int ret = whisper_full(m_whisperCtx, params, samples.constData(), (int)samples.size());
@@ -126,10 +141,21 @@ QVector<TranscriptSegment> WhisperTranscriber::transcribe(const QVector<float> &
 
 void WhisperTranscriber::transcribeAsync(const QVector<float> &samples, const QString &language)
 {
-    QVector<TranscriptSegment> result = transcribe(samples, language);
-    if (!m_cancelled) {
-        emit transcribeFinished(result);
+    // 同一时刻只允许一个识别任务：先 join 上一个，避免两个 whisper_full 共用同一 ctx
+    if (m_worker) {
+        m_worker->wait();
+        delete m_worker;
+        m_worker = nullptr;
     }
+    m_cancelled = false;
+
+    m_worker = QThread::create([this, samples, language]() {
+        QVector<TranscriptSegment> result = transcribe(samples, language);
+        if (!m_cancelled) {
+            emit transcribeFinished(result);
+        }
+    });
+    m_worker->start();
 }
 
 void WhisperTranscriber::cancel()

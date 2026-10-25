@@ -60,11 +60,19 @@ bool PlayerController::openFile(const QString &filePath)
     m_displayFrames = 0;
 
     if (avformat_open_input(&m_formatCtx, filePath.toUtf8().constData(), nullptr, nullptr) < 0) {
+        // 失败必须把状态清干净：否则 m_formatCtx 残留非空，play() 会误判可播放并启动线程，
+        // 解码线程随即在无效上下文上 avcodec_send_packet → 崩溃
+        if (m_formatCtx) avformat_close_input(&m_formatCtx);
+        m_videoStream = -1;
+        m_audioStream = -1;
         emit errorOccurred("无法打开文件");
         return false;
     }
 
     if (avformat_find_stream_info(m_formatCtx, nullptr) < 0) {
+        avformat_close_input(&m_formatCtx);
+        m_videoStream = -1;
+        m_audioStream = -1;
         emit errorOccurred("无法找到流信息");
         return false;
     }
@@ -137,13 +145,27 @@ bool PlayerController::openCodec(int streamIndex, AVCodecContext *&codecCtx)
                     if (FAILED(hr)) break;
                 }
                 // 创建设备上下文（每次新解码器都需要新的hwDeviceCtx，但复用同一个D3D11设备）
+                m_hwDeviceCtx = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_D3D11VA);
+                if (!m_hwDeviceCtx) {
+                    qWarning() << "av_hwdevice_ctx_alloc failed";
+                    break;
+                }
                 AVD3D11VADeviceContext *d3d11vaCtx = (AVD3D11VADeviceContext*)av_mallocz(sizeof(AVD3D11VADeviceContext));
+                if (!d3d11vaCtx) {
+                    av_buffer_unref(&m_hwDeviceCtx);
+                    break;
+                }
+                // 所有权约定（ffmpeg libavutil/hwcontext_d3d11va.c）：av_hwdevice_ctx_init 不会替你
+                // 对用户提供的 device/device_context 做 AddRef，但释放 hwdevice_ctx 时
+                // d3d11va_device_uninit 会无条件 Release 这两者。故交出前必须各 +1，
+                // 否则 stop()/析构时双重 Release → 设备被提前销毁 → 0xC0000005。
+                m_d3d11Device->AddRef();
+                m_d3d11Context->AddRef();
                 d3d11vaCtx->device = m_d3d11Device;
                 d3d11vaCtx->device_context = m_d3d11Context;
                 d3d11vaCtx->lock = d3d11va_lock;
                 d3d11vaCtx->unlock = d3d11va_unlock;
                 d3d11vaCtx->lock_ctx = &g_d3d11Mutex;
-                m_hwDeviceCtx = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_D3D11VA);
                 AVHWDeviceContext *hwDevCtx = (AVHWDeviceContext*)m_hwDeviceCtx->data;
                 hwDevCtx->hwctx = d3d11vaCtx;
                 if (av_hwdevice_ctx_init(m_hwDeviceCtx) >= 0) {
@@ -329,6 +351,31 @@ void PlayerController::audioCallback(Uint8 *stream, int len)
     }
 }
 
+// 停止所有工作线程：必须在各自条件变量对应的互斥量内改标志并唤醒。
+// 否则 worker 可能刚判定 m_isRunning==true、尚未进入 wait()，此时 stop 置位并
+// wakeAll（无人等待），worker 随后进入无超时 wait() → 永久阻塞，wait() 永不返回。
+void PlayerController::signalWorkersToStop()
+{
+    {
+        QMutexLocker locker(&m_pauseMutex);
+        m_isRunning = false;
+        m_isPaused = false;
+        m_pauseCondition.wakeAll();
+    }
+    {
+        QMutexLocker locker(&m_audioPacketMutex);
+        m_audioPacketCondition.wakeAll();
+    }
+    {
+        QMutexLocker locker(&m_videoPacketMutex);
+        m_videoPacketCondition.wakeAll();
+    }
+    {
+        QMutexLocker locker(&m_frameMutex);
+        m_frameCondition.wakeAll();
+    }
+}
+
 void PlayerController::startPlaybackThreads()
 {
     m_isRunning = true;
@@ -342,34 +389,22 @@ void PlayerController::startPlaybackThreads()
     m_demuxThread = QThread::create([this]() { demuxLoop(); });
     m_demuxThread->start();
 
-    // 音频预缓冲（少量即可，快速响应）
-    int waitCount = 0;
-    while (m_audioFrameQueue.size() < 5 && m_isRunning && waitCount < 30) {
-        QThread::msleep(10);
-        waitCount++;
-    }
-
-    // 视频预缓冲（1帧即可开始，避免黑屏等待）
-    waitCount = 0;
-    while (m_videoFrameQueue.size() < 1 && m_isRunning && waitCount < 20) {
-        QThread::msleep(10);
-        waitCount++;
-    }
-
+    // 不做阻塞式预缓冲：旧实现在 GUI 线程 msleep 轮询最多 30*10ms + 20*10ms，
+    // 每次 seek 都会冻结界面约 500ms。音频回调在队列为空时输出静音（stream 已 memset），
+    // 首帧到达（约 20~40ms）后自然衔接。
     if (m_audioDevice != 0) SDL_PauseAudioDevice(m_audioDevice, 0);
     m_displayTimer->start(1);
 }
 
 void PlayerController::stopPlaybackThreads()
 {
-    m_isRunning = false;
-    m_isPaused = false;
-    m_pauseCondition.wakeAll();
-    m_audioPacketCondition.wakeAll();
-    m_videoPacketCondition.wakeAll();
-    m_frameCondition.wakeAll();
+    signalWorkersToStop();
     m_displayTimer->stop();
-    if (m_audioDevice != 0) SDL_PauseAudioDevice(m_audioDevice, 1);
+    if (m_audioDevice != 0) {
+        SDL_PauseAudioDevice(m_audioDevice, 1);
+        // 丢弃 SDL 设备队列里残留的 PCM：否则 seek/停止后旧音频继续播放，音画错位
+        SDL_ClearQueuedAudio(m_audioDevice);
+    }
 
     if (m_demuxThread) { m_demuxThread->wait(); delete m_demuxThread; m_demuxThread = nullptr; }
     if (m_audioDecodeThread) { m_audioDecodeThread->wait(); delete m_audioDecodeThread; m_audioDecodeThread = nullptr; }
@@ -378,7 +413,7 @@ void PlayerController::stopPlaybackThreads()
 
 void PlayerController::play()
 {
-    if (!m_formatCtx) {
+    if (!m_formatCtx || m_videoStream < 0) {
         emit errorOccurred("请先打开视频文件");
         return;
     }
@@ -413,11 +448,7 @@ void PlayerController::pause()
 
 void PlayerController::stop()
 {
-    m_isRunning = false;
-    m_isPaused = false;
-    m_pauseCondition.wakeAll();
-    m_audioPacketCondition.wakeAll();
-    m_videoPacketCondition.wakeAll();
+    signalWorkersToStop();
     m_displayTimer->stop();
 
     if (m_demuxThread) { m_demuxThread->wait(); delete m_demuxThread; m_demuxThread = nullptr; }

@@ -26,6 +26,13 @@ Translator::Translator(QObject *parent)
 Translator::~Translator()
 {
     cancel();
+    // 必须先 join 所有异步线程：线程体捕获了 this，只加锁不 join 会在对象析构后
+    // 继续访问已释放的 llama_context / QObject → 崩溃（0xC0000005，RAX=0xdddd…）
+    for (QThread *t : m_threads) {
+        if (t) { t->wait(); delete t; }
+    }
+    m_threads.clear();
+
     QMutexLocker locker(&m_mutex);
     if (m_llamaCtx) {
         llama_free(m_llamaCtx);
@@ -34,6 +41,17 @@ Translator::~Translator()
     if (m_llamaModel) {
         llama_free_model(m_llamaModel);
         m_llamaModel = nullptr;
+    }
+}
+
+void Translator::reapFinishedThreads()
+{
+    for (int i = m_threads.size() - 1; i >= 0; --i) {
+        if (m_threads[i] && m_threads[i]->isFinished()) {
+            m_threads[i]->wait();
+            delete m_threads[i];
+            m_threads.removeAt(i);
+        }
     }
 }
 
@@ -342,14 +360,22 @@ QString Translator::translate(const QString &text, const QString &targetLang)
 
 QVector<TranslationResult> Translator::translateBatch(const QVector<QString> &texts, const QString &targetLang)
 {
-    // 新任务开始：重置取消标志（translateBatchAsync 中的 cancel() 是为了取消旧任务）
-    m_cancelled.store(false);
+    return translateBatchTask(texts, targetLang, -1);
+}
+
+QVector<TranslationResult> Translator::translateBatchTask(const QVector<QString> &texts,
+                                                          const QString &targetLang, int taskId)
+{
     QVector<TranslationResult> results;
     for (const QString &text : texts) {
         TranslationResult r;
         r.sourceText = text;
         r.targetLang = targetLang;
-        if (m_cancelled.load()) {
+        // taskId>=0 表示异步任务：被更新任务抢占即取消（不再重置全局 m_cancelled，
+        // 否则旧任务会把自己"复活"）；taskId=-1 表示同步调用，只看 cancel()
+        const bool cancelled = m_cancelled.load() ||
+                               (taskId >= 0 && m_currentTaskId.load() != taskId);
+        if (cancelled) {
             r.success = false;
             r.error = "Cancelled";
         } else {
@@ -364,6 +390,7 @@ QVector<TranslationResult> Translator::translateBatch(const QVector<QString> &te
 
 void Translator::translateAsync(const QString &text, const QString &targetLang)
 {
+    reapFinishedThreads();
     QThread *thread = QThread::create([this, text, targetLang]() {
         TranslationResult result;
         result.sourceText = text;
@@ -373,7 +400,7 @@ void Translator::translateAsync(const QString &text, const QString &targetLang)
         if (!result.success) result.error = "Translation failed";
         emit translateFinished(result);
     });
-    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    m_threads.append(thread);
     thread->start();
 }
 
@@ -381,15 +408,17 @@ void Translator::translateBatchAsync(const QVector<QString> &texts, const QStrin
 {
     // 生成新任务ID，旧任务完成时会检测到ID不匹配而不发送结果
     int taskId = ++m_currentTaskId;
-    cancel();  // 取消旧任务的推理循环
+    m_cancelled.store(false);   // 只服务于新任务；旧任务靠 taskId 不匹配退出
+
+    reapFinishedThreads();
     QThread *thread = QThread::create([this, texts, targetLang, taskId]() {
-        QVector<TranslationResult> results = translateBatch(texts, targetLang);
+        QVector<TranslationResult> results = translateBatchTask(texts, targetLang, taskId);
         // 只有当前任务ID匹配时才发送结果（避免旧任务覆盖新任务）
         if (m_currentTaskId.load() == taskId && !m_cancelled.load()) {
             emit batchTranslateFinished(results);
         }
     });
-    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    m_threads.append(thread);
     thread->start();
 }
 

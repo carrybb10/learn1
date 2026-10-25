@@ -118,8 +118,9 @@ private:
     void demuxLoop();          // 读包线程：只负责读包+分发
     void audioDecodeLoop();    // 音频解码线程
     void videoDecodeLoop();    // 视频解码线程
-    void startPlaybackThreads();  // 启动三个解码线程+预缓冲+音频+定时器
+    void startPlaybackThreads();  // 启动三个解码线程+音频+定时器（非阻塞）
     void stopPlaybackThreads();   // 停止三个解码线程（不释放解码器/音频设备）
+    void signalWorkersToStop();   // 持锁置停止标志并唤醒所有等待中的工作线程
     bool openCodec(int streamIndex, AVCodecContext *&codecCtx);
     void initAudio(AVCodecContext *audioCodecCtx);
     static void sdlAudioCallback(void *userdata, Uint8 *stream, int len);

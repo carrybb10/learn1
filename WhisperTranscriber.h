@@ -42,10 +42,12 @@ signals:
     void errorOccurred(const QString &error);
 
 private:
+    static bool abortCallback(void *userData);   // whisper_full 中止回调：读 m_cancelled
     struct whisper_context *m_whisperCtx = nullptr;
     QString m_modelPath;
     std::atomic<bool> m_cancelled{false};
     QMutex m_mutex;
+    QThread *m_worker = nullptr;   // 内部识别线程；析构时必须 join
 };
 
 #endif // WHISPERTRANSCRIBER_H

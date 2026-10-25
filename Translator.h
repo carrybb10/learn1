@@ -7,6 +7,8 @@
 #include <QMutex>
 #include <atomic>
 
+class QThread;
+
 struct TranslationResult {
     QString sourceText;
     QString translatedText;
@@ -52,12 +54,17 @@ signals:
     void errorOccurred(const QString &error);
 
 private:
+    QVector<TranslationResult> translateBatchTask(const QVector<QString> &texts,
+                                                  const QString &targetLang, int taskId);
+    void reapFinishedThreads();          // 回收已结束的异步线程，避免句柄堆积
+
     struct llama_context *m_llamaCtx = nullptr;
     struct llama_model *m_llamaModel = nullptr;
     QString m_modelPath;
     std::atomic<bool> m_cancelled{false};
     std::atomic<int> m_currentTaskId{0};  // 任务ID：用于区分新旧翻译任务，避免结果交错
     QMutex m_mutex;
+    QVector<QThread*> m_threads;          // 异步线程；析构时必须全部 join
 
     // 内部推理函数
     QString infer(const QString &prompt);

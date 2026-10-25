@@ -831,12 +831,8 @@ int main(int argc, char *argv[])
             aiBtn->setText("识别中...");
             aiBtn->setEnabled(false);
             showNotification(QString("正在识别 %1 秒音频...").arg((float)samples.size() / 16000.0f, 0, 'f', 1));
-            // 后台线程识别
-            QThread *recogThread = QThread::create([&, samples]() {
-                whisper->transcribeAsync(samples, "auto");
-            });
-            QObject::connect(recogThread, &QThread::finished, recogThread, &QThread::deleteLater);
-            recogThread->start();
+            // 识别在 WhisperTranscriber 内部的工作线程执行，对象析构时会 join 该线程
+            whisper->transcribeAsync(samples, "auto");
         }
     });
 
