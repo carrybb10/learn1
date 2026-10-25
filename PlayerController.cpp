@@ -1,8 +1,6 @@
 #include "PlayerController.h"
 #include "D3D11Renderer.h"
 #include <QDebug>
-#include <QFile>
-#include <QDataStream>
 
 // D3D11VA 设备上下文的锁回调（让FFmpeg解码时也获取g_d3d11Mutex，避免与渲染线程冲突）
 static void d3d11va_lock(void *ctx) { static_cast<QMutex*>(ctx)->lock(); }
@@ -38,11 +36,6 @@ PlayerController::~PlayerController()
 void PlayerController::setHardwareDecode(bool enable)
 {
     m_hwDecodeRequested = enable;
-}
-
-void PlayerController::setOutputResolution(int maxWidth)
-{
-    m_maxOutputWidth = maxWidth;
 }
 
 void PlayerController::setVolume(float volume)
@@ -376,7 +369,7 @@ void PlayerController::signalWorkersToStop()
     }
 }
 
-void PlayerController::startPlaybackThreads()
+void PlayerController::startPlaybackThreads(bool resumePlayback)
 {
     m_isRunning = true;
 
@@ -389,11 +382,53 @@ void PlayerController::startPlaybackThreads()
     m_demuxThread = QThread::create([this]() { demuxLoop(); });
     m_demuxThread->start();
 
+    if (!resumePlayback) return;  // 暂停中 seek：只重建线程，等用户点播放再出声
+
     // 不做阻塞式预缓冲：旧实现在 GUI 线程 msleep 轮询最多 30*10ms + 20*10ms，
     // 每次 seek 都会冻结界面约 500ms。音频回调在队列为空时输出静音（stream 已 memset），
     // 首帧到达（约 20~40ms）后自然衔接。
     if (m_audioDevice != 0) SDL_PauseAudioDevice(m_audioDevice, 0);
     m_displayTimer->start(1);
+}
+
+void PlayerController::joinPlaybackThreads()
+{
+    if (m_demuxThread) { m_demuxThread->wait(); delete m_demuxThread; m_demuxThread = nullptr; }
+    if (m_audioDecodeThread) { m_audioDecodeThread->wait(); delete m_audioDecodeThread; m_audioDecodeThread = nullptr; }
+    if (m_videoDecodeThread) { m_videoDecodeThread->wait(); delete m_videoDecodeThread; m_videoDecodeThread = nullptr; }
+}
+
+void PlayerController::clearPacketQueues()
+{
+    {
+        QMutexLocker locker(&m_audioPacketMutex);
+        while (!m_audioPacketQueue.isEmpty()) {
+            AVPacket *pkt = m_audioPacketQueue.dequeue();
+            av_packet_free(&pkt);
+        }
+    }
+    {
+        QMutexLocker locker(&m_videoPacketMutex);
+        while (!m_videoPacketQueue.isEmpty()) {
+            AVPacket *pkt = m_videoPacketQueue.dequeue();
+            av_packet_free(&pkt);
+        }
+    }
+}
+
+void PlayerController::clearFrameQueues()
+{
+    {
+        QMutexLocker locker(&m_audioFrameMutex);
+        m_audioFrameQueue.clear();
+    }
+    {
+        QMutexLocker locker(&m_frameMutex);
+        while (!m_videoFrameQueue.isEmpty()) {
+            auto pair = m_videoFrameQueue.dequeue();
+            if (pair.first.texture) StagingTexturePool::instance().release(pair.first.texture);
+        }
+    }
 }
 
 void PlayerController::stopPlaybackThreads()
@@ -405,10 +440,7 @@ void PlayerController::stopPlaybackThreads()
         // 丢弃 SDL 设备队列里残留的 PCM：否则 seek/停止后旧音频继续播放，音画错位
         SDL_ClearQueuedAudio(m_audioDevice);
     }
-
-    if (m_demuxThread) { m_demuxThread->wait(); delete m_demuxThread; m_demuxThread = nullptr; }
-    if (m_audioDecodeThread) { m_audioDecodeThread->wait(); delete m_audioDecodeThread; m_audioDecodeThread = nullptr; }
-    if (m_videoDecodeThread) { m_videoDecodeThread->wait(); delete m_videoDecodeThread; m_videoDecodeThread = nullptr; }
+    joinPlaybackThreads();
 }
 
 void PlayerController::play()
@@ -431,9 +463,8 @@ void PlayerController::play()
         return;
     }
 
-    m_startSystemTime = QDateTime::currentMSecsSinceEpoch();
     m_lastClockSamples = 0;
-    m_lastClockTime = m_startSystemTime;
+    m_lastClockTime = QDateTime::currentMSecsSinceEpoch();
     m_seekTime = 0;
 
     startPlaybackThreads();
@@ -451,9 +482,7 @@ void PlayerController::stop()
     signalWorkersToStop();
     m_displayTimer->stop();
 
-    if (m_demuxThread) { m_demuxThread->wait(); delete m_demuxThread; m_demuxThread = nullptr; }
-    if (m_audioDecodeThread) { m_audioDecodeThread->wait(); delete m_audioDecodeThread; m_audioDecodeThread = nullptr; }
-    if (m_videoDecodeThread) { m_videoDecodeThread->wait(); delete m_videoDecodeThread; m_videoDecodeThread = nullptr; }
+    joinPlaybackThreads();
 
     if (m_audioDevice != 0) {
         SDL_CloseAudioDevice(m_audioDevice);
@@ -471,12 +500,7 @@ void PlayerController::stop()
 
     m_videoStream = -1;
     m_audioStream = -1;
-    m_audioFrameQueue.clear();
-    // 释放视频帧队列中的中转纹理（归还池中）
-    while (!m_videoFrameQueue.isEmpty()) {
-        auto pair = m_videoFrameQueue.dequeue();
-        if (pair.first.texture) StagingTexturePool::instance().release(pair.first.texture);
-    }
+    clearFrameQueues();
     m_audioPlayedSamples = 0;  // 音频时钟清零，重新播放从0开始
     m_lastClockSamples = 0;
     m_lastClockTime = 0;
@@ -486,20 +510,7 @@ void PlayerController::stop()
         emit subtitleChanged(QString());
     }
 
-    // 清空音频包队列
-    QMutexLocker audioLocker(&m_audioPacketMutex);
-    while (!m_audioPacketQueue.isEmpty()) {
-        AVPacket *pkt = m_audioPacketQueue.dequeue();
-        av_packet_free(&pkt);
-    }
-    audioLocker.unlock();
-
-    // 清空视频包队列
-    QMutexLocker videoLocker(&m_videoPacketMutex);
-    while (!m_videoPacketQueue.isEmpty()) {
-        AVPacket *pkt = m_videoPacketQueue.dequeue();
-        av_packet_free(&pkt);
-    }
+    clearPacketQueues();
 }
 
 bool PlayerController::isPlaying() const
@@ -539,27 +550,8 @@ void PlayerController::performSeek()
     // seek 到最近关键帧（向后找，保证从关键帧开始解码）
     av_seek_frame(m_formatCtx, m_videoStream, targetTs, AVSEEK_FLAG_BACKWARD);
 
-    // 清空音频包队列
-    {
-        QMutexLocker locker(&m_audioPacketMutex);
-        while (!m_audioPacketQueue.isEmpty()) {
-            AVPacket *pkt = m_audioPacketQueue.dequeue();
-            av_packet_free(&pkt);
-        }
-    }
-    // 清空视频包队列
-    {
-        QMutexLocker locker(&m_videoPacketMutex);
-        while (!m_videoPacketQueue.isEmpty()) {
-            AVPacket *pkt = m_videoPacketQueue.dequeue();
-            av_packet_free(&pkt);
-        }
-    }
-    // 清空音频帧队列
-    {
-        QMutexLocker locker(&m_audioFrameMutex);
-        m_audioFrameQueue.clear();
-    }
+    // 清空四个队列（包 + 帧）
+    clearPacketQueues();
     // 清空AudioTap缓冲区（seek后时间线不连续）
     if (m_audioTapEnabled) {
         QMutexLocker tapLocker(&m_audioTapMutex);
@@ -569,14 +561,7 @@ void PlayerController::performSeek()
             m_audioTapSwr = nullptr;
         }
     }
-    // 清空视频帧队列（归还中转纹理）
-    {
-        QMutexLocker locker(&m_frameMutex);
-        while (!m_videoFrameQueue.isEmpty()) {
-            auto pair = m_videoFrameQueue.dequeue();
-            if (pair.first.texture) StagingTexturePool::instance().release(pair.first.texture);
-        }
-    }
+    clearFrameQueues();
 
     // 刷新解码器缓冲区（丢弃 seek 前的残留帧）
     if (m_videoCodecCtx) avcodec_flush_buffers(m_videoCodecCtx);
@@ -594,29 +579,11 @@ void PlayerController::performSeek()
     // 重新启动线程（如果之前在运行）
     if (wasRunning) {
         m_isPaused = wasPaused;
-        if (!wasPaused) {
-            startPlaybackThreads();
-        } else {
-            // 暂停状态下只启动线程但不启动音频/定时器（等待用户点播放）
-            m_isRunning = true;
-            m_audioDecodeThread = QThread::create([this]() { audioDecodeLoop(); });
-            m_audioDecodeThread->start();
-            m_videoDecodeThread = QThread::create([this]() { videoDecodeLoop(); });
-            m_videoDecodeThread->start();
-            m_demuxThread = QThread::create([this]() { demuxLoop(); });
-            m_demuxThread->start();
-        }
+        startPlaybackThreads(!wasPaused);
     }
 }
 
 // ==================== 播放列表 ====================
-
-void PlayerController::setPlaylist(const QStringList &files)
-{
-    m_playlist = files;
-    m_currentIndex = -1;
-    emit playlistChanged();
-}
 
 void PlayerController::addToPlaylist(const QString &filePath)
 {
@@ -655,13 +622,6 @@ void PlayerController::playNext()
 {
     if (m_currentIndex + 1 < m_playlist.size()) {
         playIndex(m_currentIndex + 1);
-    }
-}
-
-void PlayerController::playPrevious()
-{
-    if (m_currentIndex - 1 >= 0) {
-        playIndex(m_currentIndex - 1);
     }
 }
 
@@ -1242,52 +1202,6 @@ QVector<float> PlayerController::getAudioTapSamples() const
 {
     QMutexLocker locker(&m_audioTapMutex);
     return m_audioTapBuffer;
-}
-
-bool PlayerController::saveAudioTapWav(const QString &path)
-{
-    QMutexLocker locker(&m_audioTapMutex);
-    if (m_audioTapBuffer.isEmpty()) {
-        qWarning() << "[AudioTap] 缓冲区为空，无法保存WAV";
-        return false;
-    }
-
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        qWarning() << "[AudioTap] 无法打开文件:" << path;
-        return false;
-    }
-
-    QDataStream out(&file);
-    out.setByteOrder(QDataStream::LittleEndian);
-
-    int sampleRate = 16000;
-    int bitsPerSample = 32;
-    int channels = 1;
-    int dataSize = m_audioTapBuffer.size() * sizeof(float);
-    int fileSize = 44 + dataSize - 8;
-
-    // WAV header
-    out.writeRawData("RIFF", 4);
-    out << (qint32)fileSize;
-    out.writeRawData("WAVE", 4);
-    out.writeRawData("fmt ", 4);
-    out << (qint32)16;  // fmt chunk size
-    out << (qint16)3;   // audio format = 3 (IEEE float)
-    out << (qint16)channels;
-    out << (qint32)sampleRate;
-    out << (qint32)(sampleRate * channels * bitsPerSample / 8);  // byte rate
-    out << (qint16)(channels * bitsPerSample / 8);  // block align
-    out << (qint16)bitsPerSample;
-    out.writeRawData("data", 4);
-    out << (qint32)dataSize;
-
-    // Write float data
-    file.write(reinterpret_cast<const char*>(m_audioTapBuffer.constData()), dataSize);
-    file.close();
-
-    qDebug() << "[AudioTap] WAV已保存:" << path << "时长:" << (float)m_audioTapBuffer.size() / sampleRate << "秒";
-    return true;
 }
 
 // ==================== T4.9 诊断状态 ====================

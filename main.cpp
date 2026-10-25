@@ -19,7 +19,6 @@
 #include <QSettings>
 #include <QPropertyAnimation>
 #include <QMouseEvent>
-#include <QStandardPaths>
 #include <QDateTime>
 #include <QDir>
 #include <QScreen>
@@ -129,19 +128,8 @@ int main(int argc, char *argv[])
     hwCombo->setFixedWidth(140);
     hwCombo->setStyleSheet("QComboBox{color:white;background:#3a3a3a;border:none;padding:2px 6px;}QComboBox QAbstractItemView{color:white;background:#3a3a3a;selection-background-color:#0078d4;}");
 
-    QLabel *resLabel = new QLabel("输出分辨率", settingsBar);
-    resLabel->setStyleSheet("color:#bbbbbb;font-size:12px;");
-    QComboBox *resCombo = new QComboBox(settingsBar);
-    resCombo->addItem("原分辨率", 0);
-    resCombo->addItem("1080p", 1920);
-    resCombo->addItem("720p", 1280);
-    resCombo->setFixedWidth(100);
-    resCombo->setStyleSheet("QComboBox{color:white;background:#3a3a3a;border:none;padding:2px 6px;}QComboBox QAbstractItemView{color:white;background:#3a3a3a;selection-background-color:#0078d4;}");
-
     settingsLayout->addWidget(hwLabel);
     settingsLayout->addWidget(hwCombo);
-    settingsLayout->addWidget(resLabel);
-    settingsLayout->addWidget(resCombo);
     settingsLayout->addStretch(1);
 
     // 字幕开关（突出显示）
@@ -410,15 +398,12 @@ int main(int argc, char *argv[])
     // ===== 设置持久化 =====
     QSettings settings("MediaPlayer", "Config");
     bool savedHwDecode = settings.value("hardwareDecode", true).toBool();
-    int savedResIndex = settings.value("outputResolution", 0).toInt();
     int savedVolume = settings.value("volume", 100).toInt();
 
     hwCombo->setCurrentIndex(savedHwDecode ? 0 : 1);
-    resCombo->setCurrentIndex(savedResIndex);
     volumeSlider->setValue(savedVolume);
 
     player->setHardwareDecode(hwCombo->currentData().toBool());
-    player->setOutputResolution(resCombo->currentData().toInt());
     player->setVolume(volumeSlider->value() / 100.0f);
 
     // 拖拽打开文件：添加到播放列表并播放第一个
@@ -445,10 +430,6 @@ int main(int argc, char *argv[])
     QObject::connect(hwCombo, &QComboBox::currentIndexChanged, [&]() {
         player->setHardwareDecode(hwCombo->currentData().toBool());
         settings.setValue("hardwareDecode", hwCombo->currentIndex() == 0);
-    });
-    QObject::connect(resCombo, &QComboBox::currentIndexChanged, [&]() {
-        player->setOutputResolution(resCombo->currentData().toInt());
-        settings.setValue("outputResolution", resCombo->currentIndex());
     });
     QObject::connect(volumeSlider, &QSlider::valueChanged, [&](int value) {
         player->setVolume(value / 100.0f);

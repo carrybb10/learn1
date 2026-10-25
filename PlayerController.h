@@ -52,18 +52,15 @@ public:
     bool isPlaying() const;
 
     // 播放列表
-    void setPlaylist(const QStringList &files);
     void addToPlaylist(const QString &filePath);
     void removeFromPlaylist(int index);
     void playIndex(int index);
     void playNext();
-    void playPrevious();
     QStringList playlist() const { return m_playlist; }
     int currentIndex() const { return m_currentIndex; }
 
     // 策略2：质量/性能配置（播放前设置）
     void setHardwareDecode(bool enable);       // true=尝试D3D11VA硬件解码，false=强制软件解码
-    void setOutputResolution(int maxWidth);    // 0=原分辨率，>0=限制最大输出宽度(如1920/1280)
     void setVolume(float volume);              // 0.0=静音，1.0=原音量，>1.0=放大
 
     // 字幕
@@ -78,7 +75,6 @@ public:
     void stopAudioTap();            // 停止录制
     bool isAudioTapEnabled() const { return m_audioTapEnabled; }
     QVector<float> getAudioTapSamples() const;  // 获取16kHz mono float32样本
-    bool saveAudioTapWav(const QString &path);   // 保存为WAV文件
 
     // 诊断状态（T4.9）
     struct DiagnosticStats {
@@ -118,9 +114,12 @@ private:
     void demuxLoop();          // 读包线程：只负责读包+分发
     void audioDecodeLoop();    // 音频解码线程
     void videoDecodeLoop();    // 视频解码线程
-    void startPlaybackThreads();  // 启动三个解码线程+音频+定时器（非阻塞）
+    void startPlaybackThreads(bool resumePlayback = true);  // 启动三个解码线程；resumePlayback=false 时不动音频/定时器
     void stopPlaybackThreads();   // 停止三个解码线程（不释放解码器/音频设备）
     void signalWorkersToStop();   // 持锁置停止标志并唤醒所有等待中的工作线程
+    void joinPlaybackThreads();   // wait + delete 三个线程对象
+    void clearPacketQueues();     // 释放两个包队列中的 AVPacket
+    void clearFrameQueues();      // 清音频帧队列，视频帧纹理归还池
     bool openCodec(int streamIndex, AVCodecContext *&codecCtx);
     void initAudio(AVCodecContext *audioCodecCtx);
     static void sdlAudioCallback(void *userdata, Uint8 *stream, int len);
@@ -144,7 +143,6 @@ private:
     int m_swUploadW = 0, m_swUploadH = 0;
     bool m_hwDecodeRequested = true;   // 用户请求硬件解码（可配置）
     bool m_hwDecodeEnabled = false;    // 硬件解码实际生效
-    int m_maxOutputWidth = 0;          // 输出分辨率限制，0=原分辨率
     int m_videoStream = -1;
     int m_audioStream = -1;
 
@@ -192,7 +190,6 @@ private:
     qint64 m_pendingSeekPos = -1;
 
     // 同步时钟
-    qint64 m_startSystemTime = 0;
     double m_seekTime = 0;  // seek 后的起始时间（秒），音频时钟基准偏移
 
     // 线程控制
