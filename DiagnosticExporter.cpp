@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include "SystemInfo.h"
 #include "CrashHandler.h"
+#include "Version.h"
 #include <QDir>
 #include <QFile>
 #include <QTextStream>
@@ -77,7 +78,7 @@ QString DiagnosticExporter::exportDiagnostic(PlayerController* player, const QSt
         out << "MediaPlayer Diagnostic Report\n";
         out << "=============================\n";
         out << "Export time: " << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss") << "\n";
-        out << "Version: v0.4.9 (T4.9 diagnostics)\n\n";
+        out << "Version: v" MP_APP_VERSION "\n\n";
         out << "Contents:\n";
         out << "  system_info.txt    - CPU/GPU/内存/OS信息\n";
         out << "  config.txt         - 当前播放器配置\n";

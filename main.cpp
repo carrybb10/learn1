@@ -1,4 +1,5 @@
 #include <QApplication>
+#include "Version.h"
 #include <QMainWindow>
 #include <QWidget>
 #include <QVBoxLayout>
@@ -81,7 +82,7 @@ int main(int argc, char *argv[])
     // ===== T4.9 高效反馈系统初始化 =====
     // Logger 自动初始化（单例构造时创建日志文件）
     // CrashHandler 延迟安装：在D3D11初始化完成后再安装，避免捕获驱动层预期异常
-    LOG_INFO(LogModule::CORE, "MediaPlayer starting, version v0.4.9");
+    LOG_INFO(LogModule::CORE, "MediaPlayer starting, version v" MP_APP_VERSION);
 
     // 主窗口：只包含视频区域，避免Qt控件与D3D11原生窗口重绘冲突
     QMainWindow window;
@@ -833,7 +834,7 @@ int main(int argc, char *argv[])
         titleLabel->setAlignment(Qt::AlignCenter);
         layout->addWidget(titleLabel);
 
-        QLabel *verLabel = new QLabel("版本 1.0.0  |  基于 Qt6 + FFmpeg + SDL2 + D3D11", &aboutDlg);
+        QLabel *verLabel = new QLabel(QString("版本 %1  |  基于 Qt6 + FFmpeg + SDL2 + D3D11").arg(MP_APP_VERSION), &aboutDlg);
         verLabel->setStyleSheet("font-size:11px;color:#888888;");
         verLabel->setAlignment(Qt::AlignCenter);
         layout->addWidget(verLabel);

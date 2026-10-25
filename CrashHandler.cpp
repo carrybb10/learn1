@@ -1,5 +1,6 @@
 #include "CrashHandler.h"
 #include "Logger.h"
+#include "Version.h"
 #include <QDir>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -208,7 +209,7 @@ void CrashHandler::writeCrashReport(EXCEPTION_POINTERS* exceptionInfo, const QSt
     QTextStream out(&file);
     out << "=== MediaPlayer Crash Report ===\n";
     out << "Time: " << QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss") << "\n";
-    out << "Version: v0.4.9 (T4.9 diagnostics)\n";
+    out << "Version: v" MP_APP_VERSION "\n";
     out << "Exception: " << exceptionName(exceptionInfo->ExceptionRecord->ExceptionCode) << "\n";
     out << "Exception Address: 0x" << QString::number((quintptr)exceptionInfo->ExceptionRecord->ExceptionAddress, 16) << "\n";
 
