@@ -1,6 +1,8 @@
 # ============ 构建产物（可由源码重建，绝不入库） ============
 build/
+dist/
 out/
+*.zip
 cmake-build-*/
 CMakeCache.txt
 CMakeFiles/
