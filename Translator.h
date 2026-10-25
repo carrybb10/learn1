@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QVector>
+#include <QByteArray>
 #include <QMutex>
 #include <atomic>
 
@@ -44,8 +45,14 @@ public:
     // 取消翻译
     void cancel();
 
-    // 构建翻译 prompt
+    // 构建纯文本翻译指令（无 chat 模板时的降级路径）
     static QString buildPrompt(const QString &text, const QString &targetLang);
+
+    // 判断文本本身是否已经是目标语言（是则无需翻译，直接透传）
+    static bool looksLikeLanguage(const QString &text, const QString &targetLang);
+
+    // 清理模型输出：去 chat 标记、去思考行、去标签前缀、去引号
+    static QString postProcess(const QString &raw, const QString &targetLang);
 
 signals:
     void modelLoaded(bool success, const QString &error);
@@ -65,8 +72,10 @@ private:
     std::atomic<int> m_currentTaskId{0};  // 任务ID：用于区分新旧翻译任务，避免结果交错
     QMutex m_mutex;
     QVector<QThread*> m_threads;          // 异步线程；析构时必须全部 join
+    QByteArray m_chatTemplate;            // 模型自带 chat 模板（gguf 元数据），为空则用 ChatML
 
     // 内部推理函数
+    QString buildChatPrompt(const QString &text, const QString &targetLang) const;
     QString infer(const QString &prompt);
 };
 

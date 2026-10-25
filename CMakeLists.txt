@@ -79,11 +79,21 @@ target_compile_definitions(MediaPlayer PRIVATE
     $<$<CONFIG:Release>:QT_NO_INFO_OUTPUT>
 )
 
+# 8. 无 GUI 的翻译回归工具：改 prompt/采样参数后用同一批语料对比前后输出
+add_executable(translate_cli
+    tools/translate_cli.cpp
+    Translator.cpp
+)
+target_include_directories(translate_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(translate_cli PRIVATE llama Qt6::Core)
+
 # 7. 构建后自动拷贝FFmpeg、SDL2、whisper和llama的DLL到exe目录
 file(GLOB FFMPEG_DLLS ${FFMPEG_ROOT}/bin/*.dll)
 file(GLOB SDL2_DLLS ${SDL2_ROOT}/lib/*.dll)
-file(GLOB WHISPER_DLLS ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/*.dll)
-file(GLOB LLAMA_DLLS ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/llama*.dll ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/ggml*.dll)
+
+# llama/whisper 的 DLL 在配置期还不在 build 目录，必须用 target 生成表达式定位
+set(LLAMA_DLLS $<TARGET_FILE:llama> $<TARGET_FILE:ggml> $<TARGET_FILE:ggml-base> $<TARGET_FILE:ggml-cpu>)
+set(WHISPER_DLLS $<TARGET_FILE:whisper>)
 
 add_custom_command(TARGET MediaPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -92,4 +102,10 @@ add_custom_command(TARGET MediaPlayer POST_BUILD
     ${WHISPER_DLLS}
     ${LLAMA_DLLS}
     $<TARGET_FILE_DIR:MediaPlayer>
+)
+
+add_custom_command(TARGET translate_cli POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${LLAMA_DLLS}
+    $<TARGET_FILE_DIR:translate_cli>
 )
