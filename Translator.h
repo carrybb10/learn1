@@ -25,8 +25,10 @@ public:
     explicit Translator(QObject *parent = nullptr);
     ~Translator();
 
-    // 加载模型（异步，加载完成后发出 modelLoaded 信号）
+    // 加载模型（同步，阻塞调用；内部持 m_mutex）
     bool loadModel(const QString &modelPath);
+    // 加载模型（异步，加载完成后发出 modelLoaded 信号）。线程登记进 m_threads，析构时 join。
+    void loadModelAsync(const QString &modelPath);
     bool isModelLoaded() const { return m_llamaCtx != nullptr; }
 
     // 同步翻译（阻塞调用，建议在后台线程使用）

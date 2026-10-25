@@ -16,6 +16,12 @@ WhisperTranscriber::~WhisperTranscriber()
         delete m_worker;
         m_worker = nullptr;
     }
+    // 加载线程同理：它正在 whisper_init_from_file 时释放 ctx 会崩在 llama/whisper 内部
+    if (m_loadThread) {
+        m_loadThread->wait();
+        delete m_loadThread;
+        m_loadThread = nullptr;
+    }
     QMutexLocker locker(&m_mutex);
     if (m_whisperCtx) {
         whisper_free(m_whisperCtx);
@@ -48,6 +54,17 @@ bool WhisperTranscriber::loadModel(const QString &modelPath)
     qDebug() << "[Whisper] 模型加载成功:" << modelPath;
     emit modelLoaded(true, QString());
     return true;
+}
+
+void WhisperTranscriber::loadModelAsync(const QString &modelPath)
+{
+    if (m_loadThread) {          // 上一个加载还没结束（通常不会发生）先等它
+        m_loadThread->wait();
+        delete m_loadThread;
+        m_loadThread = nullptr;
+    }
+    m_loadThread = QThread::create([this, modelPath]() { loadModel(modelPath); });
+    m_loadThread->start();
 }
 
 QVector<TranscriptSegment> WhisperTranscriber::transcribe(const QVector<float> &samples, const QString &language)

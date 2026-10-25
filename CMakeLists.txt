@@ -40,6 +40,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 # 5. 添加可执行文件（qt_add_executable自动处理Windows入口点）
 qt_add_executable(MediaPlayer
     main.cpp
+    AppPaths.cpp
     PlayerController.cpp
     VideoWidget.cpp
     D3D11Renderer.cpp

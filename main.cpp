@@ -1,5 +1,6 @@
 #include <QApplication>
 #include "Version.h"
+#include "AppPaths.h"
 #include <QMainWindow>
 #include <QWidget>
 #include <QVBoxLayout>
@@ -362,31 +363,29 @@ int main(int argc, char *argv[])
     // ===== Whisper AI 识别（T4.8 验证） =====
     WhisperTranscriber *whisper = new WhisperTranscriber(&window);
     bool aiRecording = false;
-    QString whisperModelPath = QDir(QCoreApplication::applicationDirPath()).filePath("../../third_party/whisper.cpp/models/ggml-small.bin");
-
-    // 后台加载模型
-    QTimer::singleShot(500, [&]() {
-        QThread *loadThread = QThread::create([&]() {
-            whisper->loadModel(whisperModelPath);
+    const QString whisperModelPath = AppPaths::resolveResource(QStringLiteral("ai/whisperModel"),
+                                                               AppPaths::whisperModelCandidates());
+    if (whisperModelPath.isEmpty()) {
+        LOG_WARN(LogModule::AI_ASR, "whisper model not found, AI ASR disabled (set config key ai/whisperModel)");
+    } else {
+        // 后台加载，线程由 WhisperTranscriber 自己持有并在析构时 join
+        QTimer::singleShot(500, whisper, [whisper, whisperModelPath]() {
+            whisper->loadModelAsync(whisperModelPath);
         });
-        loadThread->start();
-    });
+    }
 
     // ===== Translator AI 翻译（T4.8） =====
     Translator *translator = new Translator(&window);
-    QString translatorModelPath = QDir(QCoreApplication::applicationDirPath()).filePath("../../third_party/models/Hy-MT2-1.8B-Q4_K_M.gguf");
-    qDebug() << "[Main] Translator model path:" << translatorModelPath << "exists:" << QFile::exists(translatorModelPath);
-
-    // 后台加载翻译模型（延迟2秒，使用std::thread避免QThread::create捕获问题）
-    QTimer::singleShot(2000, [translator, translatorModelPath]() {
-        qDebug() << "[Main] Starting translator load thread...";
-        std::thread *t = new std::thread([translator, translatorModelPath]() {
-            qDebug() << "[Main] Translator thread running, calling loadModel...";
-            translator->loadModel(translatorModelPath);
-            qDebug() << "[Main] Translator loadModel returned";
+    const QString translatorModelPath = AppPaths::resolveResource(QStringLiteral("ai/translatorModel"),
+                                                                  AppPaths::translatorModelCandidates());
+    if (translatorModelPath.isEmpty()) {
+        LOG_WARN(LogModule::AI_MT, "translator model not found, AI translation disabled (set config key ai/translatorModel)");
+    } else {
+        // 延迟加载，让播放器先出首帧；线程登记在 Translator 内部，析构时 join
+        QTimer::singleShot(2000, translator, [translator, translatorModelPath]() {
+            translator->loadModelAsync(translatorModelPath);
         });
-        t->detach();
-    });
+    }
 
     QObject::connect(translator, &Translator::modelLoaded, [&](bool success, const QString &error) {
         if (success) {

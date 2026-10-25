@@ -56,6 +56,14 @@ void Translator::reapFinishedThreads()
     }
 }
 
+void Translator::loadModelAsync(const QString &modelPath)
+{
+    reapFinishedThreads();
+    QThread *t = QThread::create([this, modelPath]() { loadModel(modelPath); });
+    m_threads.append(t);
+    t->start();
+}
+
 bool Translator::loadModel(const QString &modelPath)
 {
     fprintf(stderr, "[Translator] loadModel called, path: %s\n", modelPath.toUtf8().constData());

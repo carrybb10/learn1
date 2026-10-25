@@ -21,8 +21,10 @@ public:
     explicit WhisperTranscriber(QObject *parent = nullptr);
     ~WhisperTranscriber();
 
-    // 加载模型（异步，加载完成后发出 modelLoaded 信号）
+    // 加载模型（同步，阻塞调用；内部持 m_mutex）
     bool loadModel(const QString &modelPath);
+    // 加载模型（异步，加载完成后发出 modelLoaded 信号）。线程由本对象持有，析构时 join。
+    void loadModelAsync(const QString &modelPath);
     bool isModelLoaded() const { return m_whisperCtx != nullptr; }
 
     // 同步识别（阻塞调用，建议在后台线程使用）
@@ -48,6 +50,7 @@ private:
     std::atomic<bool> m_cancelled{false};
     QMutex m_mutex;
     QThread *m_worker = nullptr;   // 内部识别线程；析构时必须 join
+    QThread *m_loadThread = nullptr;  // 模型加载线程；析构时必须 join（否则加载中被释放）
 };
 
 #endif // WHISPERTRANSCRIBER_H
