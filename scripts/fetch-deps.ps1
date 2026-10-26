@@ -6,7 +6,25 @@
 param([switch]$SkipModels)
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest progress bar is very slow on PS 5.1
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+
+# CI runners hit transient network errors; a single failed git fetch used to kill the
+# whole job (v0.5.3 run). Retry the network steps instead of failing the build.
+function Invoke-WithRetry([scriptblock]$Action, [string]$What, [int]$Attempts = 3) {
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try { & $Action; return }
+        catch {
+            if ($i -eq $Attempts) { throw "$What failed after $Attempts attempts: $($_.Exception.Message)" }
+            Write-Warning "$What attempt $i failed: $($_.Exception.Message); retrying in 5s"
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
+function Get-File([string]$Url, [string]$Out) {
+    Invoke-WithRetry { Invoke-WebRequest $Url -OutFile $Out -UseBasicParsing } "download $Url"
+}
 
 $root = Split-Path -Parent $PSScriptRoot
 $tp = Join-Path $root "third_party"
@@ -24,11 +42,16 @@ function Ensure-Repo($name, $url, $commit) {
     $dir = Join-Path $tp $name
     if (-not (Test-Path (Join-Path $dir ".git"))) {
         Write-Host "clone $name ..."
-        git clone --filter=blob:none $url $dir
-        if ($LASTEXITCODE -ne 0) { throw "git clone failed: $url" }
+        Invoke-WithRetry {
+            if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+            git clone --filter=blob:none $url $dir
+            if ($LASTEXITCODE -ne 0) { throw "git clone failed: $url" }
+        } "clone $name"
     }
-    git -C $dir fetch --depth 1 origin $commit
-    if ($LASTEXITCODE -ne 0) { throw "git fetch failed: $name @ $commit" }
+    Invoke-WithRetry {
+        git -C $dir fetch --depth 1 origin $commit
+        if ($LASTEXITCODE -ne 0) { throw "git fetch failed: $name @ $commit" }
+    } "fetch $name"
     git -C $dir checkout --quiet $commit
     if ($LASTEXITCODE -ne 0) { throw "git checkout failed: $name @ $commit" }
     Write-Host "$name @ $commit ok"
@@ -55,7 +78,8 @@ $ff = Join-Path $tp "ffmpeg"
 if (-not (Test-Path (Join-Path $ff "include"))) {
     Write-Host "download FFmpeg (LGPL shared, win64) ..."
     $zip = Join-Path $tmp "ffmpeg.zip"
-    Invoke-WebRequest $ffmpegUrl -OutFile $zip -UseBasicParsing
+    Get-File $ffmpegUrl $zip
+    if ((Get-Item $zip).Length -lt 10MB) { throw "ffmpeg archive too small, download likely truncated" }
     Expand-Archive $zip -DestinationPath (Join-Path $tmp "ffmpeg") -Force
     $from = Copy-Flattened (Join-Path $tmp "ffmpeg") "include" $ff
     Write-Host "ffmpeg from: $from"
@@ -66,7 +90,8 @@ $sdl = Join-Path $tp "SDL2"
 if (-not (Test-Path (Join-Path $sdl "include"))) {
     Write-Host "download SDL2 2.32.4 ..."
     $zip = Join-Path $tmp "sdl2.zip"
-    Invoke-WebRequest $sdlUrl -OutFile $zip -UseBasicParsing
+    Get-File $sdlUrl $zip
+    if ((Get-Item $zip).Length -lt 1MB) { throw "SDL2 archive too small, download likely truncated" }
     Expand-Archive $zip -DestinationPath (Join-Path $tmp "sdl2") -Force
     $from = Copy-Flattened (Join-Path $tmp "sdl2") "include" $sdl
     Write-Host "sdl2 from: $from"
@@ -90,7 +115,7 @@ if (-not $SkipModels) {
     $wh = Join-Path $tp "whisper.cpp\models\ggml-small.bin"
     if (-not (Test-Path $wh)) {
         Write-Host "download whisper ggml-small.bin (~465MB) ..."
-        Invoke-WebRequest "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin" -OutFile $wh -UseBasicParsing
+        Get-File "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin" $wh
     }
 
     # Silero VAD for realtime subtitles (tiny, ~865KB). Mirrors first: HF is often
@@ -109,8 +134,7 @@ if (-not $SkipModels) {
             } catch {
                 Write-Warning "vad download failed: $($_.Exception.Message)"
             }
-        }
-        if (-not (Test-Path $vad) -or (Get-Item $vad).Length -lt 100000) {
+        }        if (-not (Test-Path $vad) -or (Get-Item $vad).Length -lt 100000) {
             Write-Warning "silero vad model missing: $vad (realtime subtitles will fall back to fixed windows)"
         }
     }
