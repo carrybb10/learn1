@@ -1,4 +1,4 @@
-﻿// rt_cli —— 实时字幕链路的无 GUI 端到端工具
+// rt_cli —— 实时字幕链路的无 GUI 端到端工具
 //
 // 用法：
 //   rt_cli --wav <16k mono pcm16 wav> --asr-model <ggml-small.bin> --vad-model <silero.bin>
@@ -154,8 +154,8 @@ int main(int argc, char **argv)
     QObject::connect(&feeder, &QTimer::timeout, [&]() {
         if (fed >= pcm.size()) {
             feeder.stop();
-            // 留出尾巴分段的识别时间
-            QTimer::singleShot(3000, &app, &QCoreApplication::quit);
+            // 留出尾巴分段的识别时间（整句攒批要等静音判定，再跑一次 whisper + 翻译）
+            QTimer::singleShot(12000, &app, &QCoreApplication::quit);
             return;
         }
         const int n = int(qMin<qint64>(perTick, pcm.size() - fed));

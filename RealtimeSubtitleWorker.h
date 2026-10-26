@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <QObject>
 #include <QString>
@@ -33,6 +33,10 @@ public:
         QString asrLanguage = QStringLiteral("auto");
         QString targetLang;        // 空 = 不翻译
         int backlogDropSec = 10;
+        // VAD 段先攒成整句再识别：2-3 秒的碎片会让 whisper 丢词，翻译也没有上下文
+        int minUtteranceMs = 1200;   // 短于此但已在静音处断句的段仍会处理
+        int maxUtteranceMs = 6000;   // 一直不停顿时强制切句：句子越长，出字幕越晚
+        int sentenceGapMs = 1200;    // 停这么久才认为上一句说完（口语里句内换气也能到 1 秒）
     };
 
     explicit RealtimeSubtitleWorker(QObject *parent = nullptr);
@@ -62,6 +66,8 @@ private slots:
 private:
     void drain();
     void handleSegments(const QVector<VadSegmenter::Segment> &segments);
+    void appendToUtterance(qint64 s0, qint64 s1);
+    void flushUtterance();
     QVector<float> takeSamples(qint64 start, qint64 count) const;
     void rebase(qint64 samplePos);
 
@@ -74,6 +80,16 @@ private:
     QTimer *m_timer = nullptr;
     SileroVad *m_vad = nullptr;
     VadSegmenter *m_segmenter = nullptr;
+
+    // 正在攒的整句（绝对样本位置，跨 VAD 段累积）
+    QVector<float> m_pendingAudio;
+    qint64 m_pendingStart = 0;
+    qint64 m_pendingEnd = 0;
+    qint64 m_lastSegmentEnd = -1;
+
+    // 识别出来是半句时先攒着，等拼成完整句子再翻译（碎片直译一定跑偏）
+    QString m_carryText;
+    qint64 m_carryStart = 0;
 
     qint64 m_nextSample = 0;   // 下一个待送 VAD 的绝对样本位置
     qint64 m_frameBase = 0;    // 第 0 帧对应的绝对样本位置

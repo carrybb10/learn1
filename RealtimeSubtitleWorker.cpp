@@ -1,4 +1,4 @@
-﻿#include "RealtimeSubtitleWorker.h"
+#include "RealtimeSubtitleWorker.h"
 
 #include "SileroVad.h"
 #include "Translator.h"
@@ -15,6 +15,15 @@ constexpr int kFrameSamples = SileroVad::kWindowSamples;   // 512
 constexpr int kWindowsPerDetect = 6;                       // 每次推理 192ms
 constexpr int kMinSegmentSamples = kSampleRate * 6 / 10;   // 短于 0.6s 不值得识别
 constexpr int kPollIntervalMs = 100;
+
+// 句尾标点判定：中文/日文也要认，whisper 对短片段常常不给标点
+bool endsWithSentencePunct(const QString &text)
+{
+    if (text.isEmpty())
+        return false;
+    const QChar c = text.at(text.size() - 1);
+    return QStringLiteral(".?!。！？…").contains(c);
+}
 }
 
 RealtimeSubtitleWorker::RealtimeSubtitleWorker(QObject *parent)
@@ -100,6 +109,9 @@ void RealtimeSubtitleWorker::stop()
     m_stopRequested.store(true);
     if (m_timer)
         m_timer->stop();
+    // 停止时丢掉还没攒完的半句：不再为它等一次秒级识别
+    m_pendingAudio.clear();
+    m_lastSegmentEnd = -1;
     emit statusChanged(tr("实时字幕已停止"));
 }
 
@@ -118,6 +130,9 @@ void RealtimeSubtitleWorker::rebase(qint64 samplePos)
         m_segmenter->reset();
     m_nextSample = samplePos;
     m_frameBase = samplePos;
+    // 时间线断了，攒到一半的整句不能再和后面的音频拼在一起
+    m_pendingAudio.clear();
+    m_lastSegmentEnd = -1;
 }
 
 void RealtimeSubtitleWorker::poll()
@@ -137,6 +152,13 @@ void RealtimeSubtitleWorker::poll()
     }
 
     drain();
+
+    // 说话停了（或音源结束，写指针不再前进）：把攒着的整句送出去
+    // 注意必须先看分段器是不是还在语音里：VAD 要等静音才吐出段，正在说的那段还没结算
+    const qint64 gapSamples = qint64(kSampleRate) * m_cfg.sentenceGapMs / 1000;
+    if (!m_segmenter->inSpeech() && !m_pendingAudio.isEmpty() && m_lastSegmentEnd >= 0
+        && pos - m_lastSegmentEnd >= gapSamples)
+        flushUtterance();
 }
 
 void RealtimeSubtitleWorker::drain()
@@ -179,46 +201,105 @@ QVector<float> RealtimeSubtitleWorker::takeSamples(qint64 start, qint64 count) c
 
 void RealtimeSubtitleWorker::handleSegments(const QVector<VadSegmenter::Segment> &segments)
 {
+    const qint64 gapSamples = qint64(kSampleRate) * m_cfg.sentenceGapMs / 1000;
+    const qint64 maxSamples = qint64(kSampleRate) * m_cfg.maxUtteranceMs / 1000;
+
     for (const auto &seg : segments) {
         const qint64 s0 = m_frameBase + seg.t0Frame * kFrameSamples;
         const qint64 s1 = m_frameBase + seg.t1Frame * kFrameSamples;
-        const qint64 len = s1 - s0;
-        if (len < kMinSegmentSamples)
+        if (s1 - s0 < kMinSegmentSamples)
             continue;
 
-        QVector<float> audio = takeSamples(s0, len);
-        if (audio.size() < kMinSegmentSamples)
-            continue;   // 已被环形缓冲覆盖
+        // 段间停顿够长说明上一句说完了：先把攒好的整句送出去，别把两句拼一起
+        if (!m_pendingAudio.isEmpty() && m_lastSegmentEnd >= 0 && s0 - m_lastSegmentEnd >= gapSamples)
+            flushUtterance();
 
         if (m_stopRequested.load())
             return;
 
-        QElapsedTimer timer;
-        timer.start();
+        appendToUtterance(s0, s1);
 
-        QString text;
-        const QVector<TranscriptSegment> pieces = m_asr->transcribe(audio, m_cfg.asrLanguage);
-        for (const auto &p : pieces) {
-            const QString t = p.text.trimmed();
-            // whisper 对静音/音乐会给 [BLANK_AUDIO]、(音乐) 这类占位
-            if (t.isEmpty() || t.startsWith('[') || t.startsWith(u'('))
-                continue;
-            if (!text.isEmpty())
-                text += ' ';
-            text += t;
-        }
-        if (text.isEmpty())
-            continue;
-
-        if (!m_cfg.targetLang.isEmpty() && m_translator && m_translator->isModelLoaded()) {
-            const QString translated = m_translator->translate(text, m_cfg.targetLang);
-            if (!translated.isEmpty())
-                text = translated;
-        }
-
-        const qint64 lagSamples = std::max<qint64>(0, m_position() - s1);
-        emit subtitleReady(text, double(s0) / kSampleRate, double(s1) / kSampleRate,
-                           double(timer.elapsed()),
-                           double(lagSamples) / kSampleRate);
+        // 一直不停顿的长句强制切：否则字幕要等到下一句才开始出
+        if (qint64(m_pendingAudio.size()) >= maxSamples)
+            flushUtterance();
     }
+}
+
+void RealtimeSubtitleWorker::appendToUtterance(qint64 s0, qint64 s1)
+{
+    if (s1 <= s0)
+        return;
+    const QVector<float> audio = takeSamples(s0, s1 - s0);
+    if (audio.isEmpty())
+        return;
+    if (m_pendingAudio.isEmpty())
+        m_pendingStart = s0;
+    m_pendingAudio += audio;
+    m_pendingEnd = m_pendingStart + m_pendingAudio.size();
+    m_lastSegmentEnd = s1;
+}
+
+void RealtimeSubtitleWorker::flushUtterance()
+{
+    if (m_pendingAudio.size() < kMinSegmentSamples) {
+        m_pendingAudio.clear();
+        m_lastSegmentEnd = -1;
+        return;
+    }
+
+    QVector<float> audio;
+    audio.swap(m_pendingAudio);
+    const qint64 s0 = m_pendingStart;
+    const qint64 s1 = s0 + audio.size();
+    m_pendingEnd = s1;
+    m_lastSegmentEnd = -1;
+
+    if (m_stopRequested.load())
+        return;   // 退出时不再等一次几秒的识别
+
+    QElapsedTimer timer;
+    timer.start();
+
+    QString text;
+    const QVector<TranscriptSegment> pieces = m_asr->transcribe(audio, m_cfg.asrLanguage);
+    for (const auto &p : pieces) {
+        const QString t = p.text.trimmed();
+        // whisper 对静音/音乐会给 [BLANK_AUDIO]、(音乐) 这类占位
+        if (t.isEmpty() || t.startsWith('[') || t.startsWith(u'('))
+            continue;
+        if (!text.isEmpty())
+            text += ' ';
+        text += t;
+    }
+    if (text.isEmpty())
+        return;
+
+    // 识别出来的常常是半句（VAD 在换气处断开）：攒到句号/问号或够长再翻，
+    // 否则翻译模型只看到 "can do for you," 这种碎片，译文必定跑偏。
+    if (m_carryText.isEmpty())
+        m_carryStart = s0;
+    const QString combined = m_carryText.isEmpty() ? text : m_carryText + ' ' + text;
+    const bool terminated = endsWithSentencePunct(text);
+    const bool longEnough = combined.size() >= 48 || (s1 - m_carryStart) >= qint64(kSampleRate) * 6;
+    if (!terminated && !longEnough) {
+        m_carryText = combined;
+        return;
+    }
+    m_carryText.clear();
+
+    const qint64 startSample = m_carryStart;
+    if (!m_cfg.targetLang.isEmpty() && m_translator && m_translator->isModelLoaded()) {
+        const QString translated = m_translator->translate(combined, m_cfg.targetLang);
+        if (!translated.isEmpty())
+            text = translated;
+        else
+            text = combined;
+    } else {
+        text = combined;
+    }
+
+    const qint64 lagSamples = std::max<qint64>(0, m_position() - s1);
+    emit subtitleReady(text, double(startSample) / kSampleRate, double(s1) / kSampleRate,
+                       double(timer.elapsed()),
+                       double(lagSamples) / kSampleRate);
 }

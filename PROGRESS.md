@@ -20,6 +20,8 @@
 | `v0.5.2` | 实时字幕接通播放链路：`RealtimeSubtitleWorker`（环形缓冲 -> VAD -> whisper -> 翻译）+ `rt_cli` 端到端工具；whisper 线程数随核数提升 |
 | `v0.5.3` | 便携版把 `logs/`、`crash_reports/` 留在自己目录（原来写到上一级），重新打包 |
 | `v0.5.4` | 缺模型不再误报"加载中"（三态提示 + 应放路径）；便携 ini 配置；`scripts/package.ps1` 一键打包 |
+| `v0.5.5` | 依赖脚本加重试与体积校验（修 CI 上偶发的拉取失败）；版本号与 tag 对齐 |
+| `v0.5.6` | 实时字幕改成"整句攒批"再识别/翻译：VAD 段跨换气合并（1.2s 静音才算断句）、超过 6s 强制切、半句文本续接 |
 
 ## 本轮修掉的问题
 
@@ -34,7 +36,8 @@
 ## 当前状态
 
 - **实测（2026-10-26）**：105 分钟连续播放无崩溃、无音画错误；拖动进度条无卡顿。配合 seek 双因修复（移除 GUI 线程预缓冲轮询 + 清 SDL 设备队列），ROADMAP FR-04「seek 响应」与 NFR-01「2 小时 0 崩溃」按通过记录（105 分钟）。
-- **M6 实时字幕进度**：音频环形缓冲（60s、3.84MB 固定占用）已完成；VAD 分段链路已打通并可无 GUI 自检——`SileroVad`（加载 + 流式概率）、`VadSegmenter`（阈值/最短语音/最长静音/最长段）、`vad_cli`（wav → 分段列表）。关键坑：首次流式推理前必须 `whisper_vad_reset_state()`，否则语音概率被系统性低估。尚未接入播放线程，GUI 里的实时字幕仍走离线录制。
+- **M6 实时字幕进度**：环形缓冲（60s、3.84MB 固定占用）→ VAD 分段 → whisper → 翻译已接通播放链路（`RealtimeSubtitleWorker`，v0.5.2），并有无 GUI 端到端工具 `rt_cli`。
+- **v0.5.6 翻译质量修复**：症状是「翻译基本不搭边」。取证结论：模型本身没问题，是**投喂的音频碎片**——VAD 在换气处断开后只有 1–3 秒，whisper 会丢词/幻觉（`ask not what your country` → 识别成 `What country can do for you?` → 译成「哪个国家能为你服务？」）。修复：VAD 段跨换气合并成整句（静音 ≥1.2s 才算断句）、最长 6s 强制切、识别结果若是半句先攒着等拼成完整句子再翻译。
 
 - 构建：`cmake --build build --config Debug -j 8` 通过，无新增告警（既有 `MSB8027` 来自 llama.cpp 同名源文件，可忽略）。
 - 翻译回归：`translate_cli` + `tests/translate_samples.txt`，中文/英语/日语/韩语四向各 7/7 非空，单句 1.1–1.8 秒，无空译、无第二语言行。
@@ -64,7 +67,8 @@
 3. 翻译对"中文目标 + 日语源"的简体/繁体倾向依赖模型自身，未做后处理归一。
 4. `main.cpp` 965 行、`PlayerController.cpp` 1251 行仍是单文件单类，拆分方案见 `docs/REFACTOR_PLAN.md`（未执行）。
 5. 自动化测试覆盖纯函数 26 断言 + D3D11 纹理探针（ctest 2/2）；播放链路仍靠 `docs/ACCEPTANCE.md` 手动回归。CI 工作流已写但**未在 Actions 上跑过一次**。
-6. Silero VAD 已实现（`SileroVad` + `VadSegmenter` + `vad_cli` 自检），但实时链路只在小样音频（jfk.wav）上验证过，**没在真实视频上做端到端延迟实测**。
+6. **实时字幕延迟超标**：真实日语片段（Guilty Crown 30s）实测，`ggml-small` 下每 6s 句子耗时约 5s（识别 4.4s + 翻译 0.6s），字幕比画面晚 10–13s；`ggml-tiny` 约 3s/句、晚 8s 左右但识别质量下降。CPU 是硬瓶颈，要压到 ROADMAP 的 ≤8s 需要 GPU（CUDA 版 whisper）或换更快的识别模型。
+7. 翻译"不搭边"的根因已在 v0.5.6 处理（碎片投喂），但**没有在真实长片源上做整集回归**；模型替换（更大参数）暂不需要。
 
 ## 下一步（按 ROADMAP v5）
 
