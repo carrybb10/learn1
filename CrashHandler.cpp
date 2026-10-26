@@ -1,4 +1,4 @@
-#include "CrashHandler.h"
+﻿#include "CrashHandler.h"
 #include "Logger.h"
 #include "Version.h"
 #include <QDir>
@@ -21,7 +21,7 @@ void CrashHandler::install() {
 }
 
 QString CrashHandler::crashReportDir() {
-    QString dir = QCoreApplication::applicationDirPath() + "/../../crash_reports";
+    QString dir = QCoreApplication::applicationDirPath() + "/crash_reports";
     QDir().mkpath(dir);
     return dir;
 }

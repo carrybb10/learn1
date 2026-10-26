@@ -1,4 +1,4 @@
-#include "Logger.h"
+﻿#include "Logger.h"
 #include <QDir>
 #include <QCoreApplication>
 #include <cstdio>
@@ -13,7 +13,7 @@ Logger::Logger() : m_level(LogLevel::LVL_INFO) {
     ensureLogDir();
     rotateLogs();
 
-    QString logDir = QCoreApplication::applicationDirPath() + "/../../logs";
+    QString logDir = QCoreApplication::applicationDirPath() + "/logs";
     m_logFilePath = QDir(logDir).filePath(
         QString("mediaplayer_%1.log").arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")));
 
@@ -120,12 +120,12 @@ QString Logger::moduleName(LogModule module) {
 }
 
 void Logger::ensureLogDir() {
-    QString logDir = QCoreApplication::applicationDirPath() + "/../../logs";
+    QString logDir = QCoreApplication::applicationDirPath() + "/logs";
     QDir().mkpath(logDir);
 }
 
 void Logger::rotateLogs() {
-    QString logDir = QCoreApplication::applicationDirPath() + "/../../logs";
+    QString logDir = QCoreApplication::applicationDirPath() + "/logs";
     QDir dir(logDir);
     if (!dir.exists()) return;
 

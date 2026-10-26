@@ -1,4 +1,4 @@
-#include "DiagnosticExporter.h"
+﻿#include "DiagnosticExporter.h"
 #include "PlayerController.h"
 #include "Logger.h"
 #include "SystemInfo.h"
@@ -150,7 +150,7 @@ QString DiagnosticExporter::generatePlayerState(PlayerController* player) {
 }
 
 bool DiagnosticExporter::copyLogs(const QString& destDir) {
-    QString logDir = QCoreApplication::applicationDirPath() + "/../../logs";
+    QString logDir = QCoreApplication::applicationDirPath() + "/logs";
     QDir dir(logDir);
     if (!dir.exists()) return false;
 
