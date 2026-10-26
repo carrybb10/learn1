@@ -1,6 +1,6 @@
-# PROGRESS
+﻿# PROGRESS
 
-> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-10-25（v0.4.8）
+> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-10-26（v0.5.0）
 
 ## 版本线
 
@@ -15,6 +15,7 @@
 | `v0.4.6` | M5 起步：模型路径配置化（AppPaths）、模型异步加载可 join、手动验收清单 |
 | `v0.4.7` | 纯函数单测（26 断言）+ ctest 入口 + 最小 CI 工作流（未实跑） |
 | `v0.4.8` | 软解黑屏修复（NV12 上传纹理改 STAGING）+ `d3d11_probe` 回归 + CI 首跑修复 |
+| `v0.5.0` | M5 质量基线完成：105 分钟长跑无崩溃、seek 无卡顿；实时字幕音频输入改用 60s 环形缓冲 |
 
 ## 本轮修掉的问题
 
@@ -27,6 +28,8 @@
 7. **未定义行为** — `WhisperTranscriber`/`Translator` 析构不等工作线程（use-after-free）、`main.cpp` 用 detached `std::thread` 加载模型、AI 识别按钮外层多包了一层 `QThread`。已全部改为可 cancel + join。
 
 ## 当前状态
+
+- **实测（2026-10-26）**：105 分钟连续播放无崩溃、无音画错误；拖动进度条无卡顿。配合 seek 双因修复（移除 GUI 线程预缓冲轮询 + 清 SDL 设备队列），ROADMAP FR-04「seek 响应」与 NFR-01「2 小时 0 崩溃」按通过记录（105 分钟）。
 
 - 构建：`cmake --build build --config Debug -j 8` 通过，无新增告警（既有 `MSB8027` 来自 llama.cpp 同名源文件，可忽略）。
 - 翻译回归：`translate_cli` + `tests/translate_samples.txt`，中文/英语/日语/韩语四向各 7/7 非空，单句 1.1–1.8 秒，无空译、无第二语言行。
@@ -58,5 +61,5 @@
 ## 下一步（按 ROADMAP v5）
 
 1. **M5 质量基线**（已完成：D-02 模型路径配置化、ACCEPTANCE 清单、纯函数单测、CI 骨架；未完成：2 小时长跑 + 切换 50 次、软解回退端到端、CI 实跑）。
-2. **M6 实时字幕**：音频环形缓冲 → Silero VAD（当前未实现）→ 分段 ASR → 带上下文的翻译 → 端到端延迟打点，目标 ≤ 8s。
+2. **M6 实时字幕（进行中）**：60s 环形缓冲已完成（`AudioRingBuffer`，单测覆盖容量/覆盖/跨环）；下一步 Silero VAD 流式分段（whisper.cpp 自带 `whisper_vad_detect_speech_no_reset`）→ 分段 ASR → 上下文翻译 → 延迟打点，目标 <= 8s。
 3. 拆文件仍登记为技术债 D-01，按需抽取，不作为独立任务（触发条件见 `docs/REFACTOR_PLAN.md`）。
