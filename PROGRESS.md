@@ -16,7 +16,7 @@
 | `v0.4.7` | 纯函数单测（26 断言）+ ctest 入口 + 最小 CI 工作流（未实跑） |
 | `v0.4.8` | 软解黑屏修复（NV12 上传纹理改 STAGING）+ `d3d11_probe` 回归 + CI 首跑修复 |
 | `v0.5.0` | M5 质量基线完成：105 分钟长跑无崩溃、seek 无卡顿；实时字幕音频输入改用 60s 环形缓冲 |
-| `v0.5.1` | Silero VAD 分段链路打通：`SileroVad` + `VadSegmenter` + `vad_cli`，流式与整段结果一致 |
+| `v0.5.1` | Silero VAD 分段链路打通：`SileroVad` + `VadSegmenter` + `vad_cli`，流式与整段结果一致 |（CI run 40337277482 通过）
 
 ## 本轮修掉的问题
 
