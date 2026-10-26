@@ -25,10 +25,31 @@ Copy-Item (Join-Path $build "$Config\MediaPlayer.exe") $dist
 
 # Qt runtime. dxcompiler.dll is optional; windeployqt only warns about it, and that
 # warning must not abort the script under ErrorActionPreference=Stop.
+# windeployqt is usually not on PATH: derive it from Qt6_DIR recorded in the CMake cache.
+$windeployqt = 'windeployqt'
+$cache = Join-Path $build 'CMakeCache.txt'
+if (Test-Path $cache) {
+    $m = Select-String -Path $cache -Pattern '^Qt6_DIR:[^=]*=(.+)$' | Select-Object -First 1
+    if ($m) {
+        $qtLib = $m.Matches[0].Groups[1].Value.Trim()
+        $qtPrefix = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $qtLib))
+        $candidate = Join-Path $qtPrefix 'bin\windeployqt.exe'
+        if (Test-Path $candidate) { $windeployqt = $candidate }
+    }
+}
+if (-not (Test-Path $windeployqt) -and -not (Get-Command $windeployqt -ErrorAction SilentlyContinue)) {
+    throw "windeployqt not found (looked next to Qt6_DIR from $cache)"
+}
+
 $previous = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-& windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw (Join-Path $dist 'MediaPlayer.exe')
+& $windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw (Join-Path $dist 'MediaPlayer.exe')
 $ErrorActionPreference = $previous
+
+# windeployqt failing silently would produce a package that cannot start; make it loud.
+if (-not (Test-Path (Join-Path $dist 'Qt6Core.dll'))) {
+    throw "windeployqt did not copy Qt6Core.dll into $dist"
+}
 
 Get-ChildItem (Join-Path $build $Config) -Filter '*.dll' | ForEach-Object { Copy-Item $_.FullName $dist }
 
