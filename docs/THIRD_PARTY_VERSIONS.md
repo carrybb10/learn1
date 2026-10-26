@@ -27,11 +27,22 @@
 | `models/Hy-MT2-1.8B-Q4_K_M.gguf` | 1080.6 MB | `DC5F44FCF1FA496E` | 离线翻译 |
 | `whisper.cpp/models/ggml-small.bin` | 465.0 MB | `1BE3A9B2063867B9` | 语音识别（默认） |
 | `whisper.cpp/models/ggml-tiny.bin` | 74.1 MB | `BE07E048E1E599AD` | 低配回退 |
+| `whisper.cpp/models/ggml-silero-v5.1.2.bin` | 0.84 MB | 见下方说明 | 实时字幕语音活动检测（VAD） |
+
+Silero VAD 取自 `ggml-org/whisper-vad`；`scripts/fetch-deps.ps1` 会先试 `hf-mirror.com`、再试 `huggingface.co`。
+`for-tests-silero-v6.2.0-ggml.bin` 只用于上游 CI，权重是测试用的，**不要**拿来跑真实分段。
 
 ## 基线产物校验
 
 `build/Debug/MediaPlayer.exe` SHA256 前 16 位：`340534FC4E49664E`（2026-10-25 17:17 构建）。
 
-## 已知未使用依赖
+## VAD 分段自检
 
-`licenses/Silero_VAD_MIT.txt` 已列入许可清单，但工程内**没有 VAD 实现**（`third_party/whisper.cpp/models/for-tests-silero-v6.2.0-ggml.bin` 仅为上游测试模型）。二选一：实现 VAD，或在下个版本移除该许可声明。
+```powershell
+.\build\Debug\vad_cli.exe --model third_party\whisper.cpp\models\ggml-silero-v5.1.2.bin `
+    --wav third_party\whisper.cpp\samples\jfk.wav
+```
+
+`third_party/whisper.cpp/samples/jfk.wav`（11s，16k 单声道）的期望输出：4 段、speech ratio 62.8%，
+首段 `[320 - 2144) ms`、末段 `[8192 - 10528) ms`。加 `--whole` 走整段参考实现，两者结果应完全一致。
+

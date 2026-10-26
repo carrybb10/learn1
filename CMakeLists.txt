@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 project(MediaPlayer)
 
 # 1. 配置Qt6路径（也可以通过命令行传入）
@@ -42,6 +42,8 @@ qt_add_executable(MediaPlayer
     main.cpp
     AppPaths.cpp
     AudioRingBuffer.cpp
+    VadSegmenter.cpp
+    SileroVad.cpp
     PlayerController.cpp
     VideoWidget.cpp
     D3D11Renderer.cpp
@@ -114,11 +116,27 @@ add_custom_command(TARGET translate_cli POST_BUILD
     $<TARGET_FILE_DIR:translate_cli>
 )
 
+# 8.6 无 GUI 的 VAD 分段校验：音频 -> Silero VAD -> 语音段（不需要视频文件）
+add_executable(vad_cli
+    tools/vad_cli.cpp
+    SileroVad.cpp
+    VadSegmenter.cpp
+)
+target_include_directories(vad_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(vad_cli PRIVATE whisper Qt6::Core)
+
+add_custom_command(TARGET vad_cli POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${WHISPER_DLLS}
+    $<TARGET_FILE_DIR:vad_cli>
+)
+
 # 9. 纯函数单元测试：不加载模型、不开窗口、不碰 D3D11，秒级返回
 enable_testing()
 add_executable(unit_tests
     tests/unit_tests.cpp
     AudioRingBuffer.cpp
+    VadSegmenter.cpp
     Translator.cpp
     AppPaths.cpp
     Logger.cpp

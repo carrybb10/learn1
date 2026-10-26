@@ -12,6 +12,7 @@
 #include "AppPaths.h"
 #include "AudioRingBuffer.h"
 #include "Translator.h"
+#include "VadSegmenter.h"
 
 static int g_failed = 0;
 static int g_total = 0;
@@ -170,6 +171,82 @@ static void testAudioRingBuffer()
     CHECK_NUM(big.copyFrom(0, out, 8), 0);
 }
 
+static void testVadSegmenter()
+{
+    // 参数缩小到方便手算：最短语音 3 帧、断句静音 2 帧、单段上限 6 帧
+    VadSegmenter::Params p;
+    p.threshold = 0.5f;
+    p.minSpeechFrames = 3;
+    p.minSilenceFrames = 2;
+    p.maxSegmentFrames = 6;
+
+    QVector<VadSegmenter::Segment> segs;
+
+    // 正常一句：3 帧语音 + 2 帧静音 → [0,3)
+    {
+        VadSegmenter v(p);
+        segs.clear();
+        for (int i = 0; i < 3; ++i) v.push(0.9f, &segs);
+        CHECK_NUM(segs.size(), 0);              // 还没遇到足够的静音
+        CHECK(v.inSpeech());
+        for (int i = 0; i < 2; ++i) v.push(0.1f, &segs);
+        CHECK_NUM(segs.size(), 1);
+        CHECK_NUM(segs[0].t0Frame, qint64(0));
+        CHECK_NUM(segs[0].t1Frame, qint64(3));  // 尾部静音不算进来
+        CHECK(!v.inSpeech());
+    }
+
+    // 太短的一声（咔哒声）丢弃
+    {
+        VadSegmenter v(p);
+        segs.clear();
+        v.push(0.9f, &segs);
+        v.push(0.1f, &segs);
+        v.push(0.1f, &segs);
+        CHECK_NUM(segs.size(), 0);
+    }
+
+    // 一直说不停：到 6 帧强制切一段，避免字幕永不出
+    {
+        VadSegmenter v(p);
+        segs.clear();
+        for (int i = 0; i < 7; ++i) v.push(0.9f, &segs);
+        CHECK_NUM(segs.size(), 1);
+        CHECK_NUM(segs[0].t0Frame, qint64(0));
+        CHECK_NUM(segs[0].t1Frame, qint64(6));
+        CHECK(v.inSpeech());                    // 第 7 帧属于下一段
+    }
+
+    // 两个人在说话之间的长静音会切成两段
+    {
+        VadSegmenter v(p);
+        segs.clear();
+        for (int i = 0; i < 4; ++i) v.push(0.9f, &segs);
+        for (int i = 0; i < 5; ++i) v.push(0.05f, &segs);
+        for (int i = 0; i < 4; ++i) v.push(0.9f, &segs);
+        for (int i = 0; i < 2; ++i) v.push(0.05f, &segs);
+        CHECK_NUM(segs.size(), 2);
+        CHECK_NUM(segs[0].t1Frame, qint64(4));
+        CHECK_NUM(segs[1].t0Frame, qint64(9));
+        CHECK_NUM(segs[1].t1Frame, qint64(13));
+    }
+
+    // flush 吐出未闭合的尾段；reset 后帧号归零
+    {
+        VadSegmenter v(p);
+        segs.clear();
+        for (int i = 0; i < 4; ++i) v.push(0.9f, &segs);
+        v.flush(&segs);
+        CHECK_NUM(segs.size(), 1);
+        CHECK_NUM(segs[0].t1Frame, qint64(4));
+        v.reset();
+        CHECK_NUM(v.frameIndex(), qint64(0));
+        segs.clear();
+        v.flush(&segs);
+        CHECK_NUM(segs.size(), 0);
+    }
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -179,6 +256,7 @@ int main(int argc, char **argv)
     testBuildPrompt();
     testAppPaths();
     testAudioRingBuffer();
+    testVadSegmenter();
 
     std::printf("%d checks, %d failed\n", g_total, g_failed);
     return g_failed == 0 ? 0 : 1;

@@ -92,6 +92,28 @@ if (-not $SkipModels) {
         Write-Host "download whisper ggml-small.bin (~465MB) ..."
         Invoke-WebRequest "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin" -OutFile $wh -UseBasicParsing
     }
+
+    # Silero VAD for realtime subtitles (tiny, ~865KB). Mirrors first: HF is often
+    # unreachable from mainland China; the file is identical on both.
+    $vad = Join-Path $tp "whisper.cpp\models\ggml-silero-v5.1.2.bin"
+    if (-not (Test-Path $vad)) {
+        $urls = @(
+            "https://hf-mirror.com/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin",
+            "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"
+        )
+        foreach ($u in $urls) {
+            try {
+                Write-Host "download silero vad model from $u"
+                Invoke-WebRequest $u -OutFile $vad -UseBasicParsing
+                if ((Get-Item $vad).Length -gt 100000) { break }
+            } catch {
+                Write-Warning "vad download failed: $($_.Exception.Message)"
+            }
+        }
+        if (-not (Test-Path $vad) -or (Get-Item $vad).Length -lt 100000) {
+            Write-Warning "silero vad model missing: $vad (realtime subtitles will fall back to fixed windows)"
+        }
+    }
 }
 
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue

@@ -1,4 +1,4 @@
-﻿# AGENTS.md — 本仓库的工作约定
+# AGENTS.md — 本仓库的工作约定
 
 给"下一个进入这个仓库的人/模型"看的。先读本文件，再读 `PROGRESS.md`，最后按需读 `docs/`。
 
@@ -31,6 +31,7 @@ cmake --build build --config Debug -j 8
 - **日志消息用英文/ASCII**：`LOG_*` 宏走 `QString::asprintf` 的 `%s`，中文会按 GBK 解码成乱码写进日志文件。注释可以中文，日志字符串不行。
 - 新增可在无 GUI 下验证的逻辑，优先放进 `translate_cli` 这类命令行入口，而不是只挂在按钮上。
 - 模型/资源路径不许硬拼 `../../third_party/`：走 `AppPaths::resolveResource()`（配置项 `ai/whisperModel`、`ai/translatorModel` 可覆盖）。
+- **Silero VAD 流式推理前必须 `whisper_vad_reset_state()` 一次**：新分配的 backend buffer 不保证为 0，带着脏状态推理会系统性低估语音概率（实测 speech ratio 62.8% → 21.5%，断句全错）。之后用 `whisper_vad_detect_speech_no_reset()` 连续喂；seek/换片再 reset。
 
 ## 文档规则
 
