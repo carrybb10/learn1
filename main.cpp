@@ -1,4 +1,4 @@
-﻿#include <QApplication>
+#include <QApplication>
 #include "Version.h"
 #include "AppPaths.h"
 #include "RealtimeSubtitleWorker.h"
@@ -76,6 +76,10 @@ private:
     std::function<void()> callback;
     std::function<void(const QStringList&)> dropCallback;
 };
+
+// 模型加载状态：把"没找到模型"和"还在加载"区分开，
+// 否则便携包缺 models 目录时会一直提示"加载中"，用户无从判断。
+enum class ModelState { Missing, Loading, Ready, Failed };
 
 int main(int argc, char *argv[])
 {
@@ -368,16 +372,21 @@ int main(int argc, char *argv[])
 
     PlayerController *player = new PlayerController(&window);
 
+    // 便携配置：<exe>/MediaPlayer.ini 的 [ai] 段可覆盖模型路径，优先于注册表
+    AppPaths::setConfigFile(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("MediaPlayer.ini")));
+
     // ===== Whisper AI 识别（T4.8 验证） =====
     WhisperTranscriber *whisper = new WhisperTranscriber(&window);
     bool aiRecording = false;
     bool rtActive = false;
+    ModelState asrState = ModelState::Missing;
     const QString whisperModelPath = AppPaths::resolveResource(QStringLiteral("ai/whisperModel"),
                                                                AppPaths::whisperModelCandidates());
     if (whisperModelPath.isEmpty()) {
         LOG_WARN(LogModule::AI_ASR, "whisper model not found, AI ASR disabled (set config key ai/whisperModel)");
     } else {
         // 后台加载，线程由 WhisperTranscriber 自己持有并在析构时 join
+        asrState = ModelState::Loading;
         QTimer::singleShot(500, whisper, [whisper, whisperModelPath]() {
             whisper->loadModelAsync(whisperModelPath);
         });
@@ -385,16 +394,29 @@ int main(int argc, char *argv[])
 
     // ===== Translator AI 翻译（T4.8） =====
     Translator *translator = new Translator(&window);
+    ModelState mtState = ModelState::Missing;
     const QString translatorModelPath = AppPaths::resolveResource(QStringLiteral("ai/translatorModel"),
                                                                   AppPaths::translatorModelCandidates());
     if (translatorModelPath.isEmpty()) {
         LOG_WARN(LogModule::AI_MT, "translator model not found, AI translation disabled (set config key ai/translatorModel)");
     } else {
         // 延迟加载，让播放器先出首帧；线程登记在 Translator 内部，析构时 join
+        mtState = ModelState::Loading;
         QTimer::singleShot(2000, translator, [translator, translatorModelPath]() {
             translator->loadModelAsync(translatorModelPath);
         });
     }
+    // 加载线程把结果传回主线程：状态用于区分"没模型 / 加载中 / 加载失败"
+    QObject::connect(whisper, &WhisperTranscriber::modelLoaded, whisper, [&](bool ok, const QString &err) {
+        asrState = ok ? ModelState::Ready : ModelState::Failed;
+        LOG_INFO(LogModule::AI_ASR, "whisper model load finished, ok=%d", ok ? 1 : 0);
+        if (!ok) LOG_WARN(LogModule::AI_ASR, "whisper model load failed: %s", err.toUtf8().constData());
+    }, Qt::QueuedConnection);
+    QObject::connect(translator, &Translator::modelLoaded, translator, [&](bool ok, const QString &err) {
+        mtState = ok ? ModelState::Ready : ModelState::Failed;
+        LOG_INFO(LogModule::AI_MT, "translator model load finished, ok=%d", ok ? 1 : 0);
+        if (!ok) LOG_WARN(LogModule::AI_MT, "translator model load failed: %s", err.toUtf8().constData());
+    }, Qt::QueuedConnection);
 
     // ===== 实时字幕工作线程 =====
     RealtimeSubtitleWorker *rtWorker = new RealtimeSubtitleWorker();
@@ -832,14 +854,23 @@ int main(int argc, char *argv[])
 
     QObject::connect(rtBtn, &QPushButton::clicked, [&]() {
         if (!rtActive) {
-            if (!whisper->isModelLoaded()) {
-                showNotification("语音识别模型还在加载，请稍候");
+            if (asrState == ModelState::Missing) {
+                showNotification(QString("找不到语音识别模型，请把 ggml-small.bin 放到：%1").arg(AppPaths::modelsDirHint()));
                 return;
             }
+            if (asrState == ModelState::Loading) {
+                showNotification("语音识别模型加载中，请稍候再点");
+                return;
+            }
+            if (asrState == ModelState::Failed) {
+                showNotification("语音识别模型加载失败，详情见 logs 日志");
+                return;
+            }
+
             const QString vadPath = AppPaths::resolveResource(QStringLiteral("ai/vadModel"),
                                                               AppPaths::vadModelCandidates());
             if (vadPath.isEmpty()) {
-                showNotification("缺少 VAD 模型（third_party/whisper.cpp/models/ggml-silero-v5.1.2.bin）");
+                showNotification(QString("缺少 VAD 模型，请把 ggml-silero-v5.1.2.bin 放到：%1").arg(AppPaths::modelsDirHint()));
                 return;
             }
 
@@ -870,8 +901,16 @@ int main(int argc, char *argv[])
 
     // AI识别按钮（T4.8验证）
     QObject::connect(aiBtn, &QPushButton::clicked, [&]() {
-        if (!whisper->isModelLoaded()) {
-            showNotification("AI模型加载中，请稍候...");
+        if (asrState == ModelState::Missing) {
+            showNotification(QString("找不到语音识别模型，请把 ggml-small.bin 放到：%1").arg(AppPaths::modelsDirHint()));
+            return;
+        }
+        if (asrState == ModelState::Loading) {
+            showNotification("语音识别模型加载中，请稍候再点");
+            return;
+        }
+        if (asrState == ModelState::Failed) {
+            showNotification("语音识别模型加载失败，详情见 logs 日志");
             return;
         }
         if (!aiRecording) {

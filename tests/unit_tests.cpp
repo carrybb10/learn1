@@ -1,4 +1,4 @@
-﻿// 纯函数单元测试：不加载模型、不开窗口、不碰 D3D11。
+// 纯函数单元测试：不加载模型、不开窗口、不碰 D3D11。
 // 覆盖翻译后处理（历史上出过"输出第二语言行/同语言被吞"的坑）与模型路径解析。
 // 运行：cmake --build build --config Debug --target unit_tests && ctest --test-dir build -C Debug
 
@@ -118,6 +118,42 @@ static void testAppPaths()
     CHECK(found.endsWith(probeName));
     CHECK(QFile::exists(found));
     QFile::remove(probeName);
+
+    // 便携 ini 优先于固定命名规则：这是"解压到任意目录也能指到模型"的唯一入口
+    const QString iniName = "unit_test_paths.ini";
+    const QString iniTarget = QDir::current().filePath("unit_test_ini_target.bin");
+    {
+        QFile probe(iniTarget);
+        if (probe.open(QIODevice::WriteOnly)) {
+            probe.write("probe");
+            probe.close();
+        }
+    }
+    {
+        QFile ini(iniName);
+        if (ini.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            ini.write(QString("[ai]\nprobeKey=%1\nmissingKey=no_such_file.bin\n")
+                          .arg(QDir::fromNativeSeparators(iniTarget))
+                          .toUtf8());
+            ini.close();
+        }
+    }
+    AppPaths::setConfigFile(iniName);
+    CHECK_EQ(AppPaths::configFile(), iniName);
+    const QString fromIni = AppPaths::resolveResource(QStringLiteral("ai/probeKey"),
+                                                     QStringList() << "should-not-be-used.bin");
+    CHECK(fromIni.endsWith("unit_test_ini_target.bin"));
+    CHECK(QFile::exists(fromIni));
+
+    // ini 写错路径时不能直接失败，要继续走后面的候选（这里都没有，结果为空）
+    const QString badIni = AppPaths::resolveResource(QStringLiteral("ai/missingKey"),
+                                                    QStringList() << "still-missing.bin");
+    CHECK_EQ(badIni, QString());
+
+    AppPaths::setConfigFile(QString());
+    CHECK(AppPaths::modelsDirHint().endsWith("models"));
+    QFile::remove(iniName);
+    QFile::remove(iniTarget);
 }
 
 static void testAudioRingBuffer()

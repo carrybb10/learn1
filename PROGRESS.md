@@ -1,4 +1,4 @@
-﻿# PROGRESS
+# PROGRESS
 
 > 本文件是唯一可原地覆盖的进度文档。最后更新：2026-10-26（v0.5.1）
 
@@ -19,6 +19,7 @@
 | `v0.5.1` | Silero VAD 分段链路打通：`SileroVad` + `VadSegmenter` + `vad_cli`，流式与整段结果一致 |（CI run 40337277482 通过）
 | `v0.5.2` | 实时字幕接通播放链路：`RealtimeSubtitleWorker`（环形缓冲 -> VAD -> whisper -> 翻译）+ `rt_cli` 端到端工具；whisper 线程数随核数提升 |
 | `v0.5.3` | 便携版把 `logs/`、`crash_reports/` 留在自己目录（原来写到上一级），重新打包 |
+| `v0.5.4` | 缺模型不再误报"加载中"（三态提示 + 应放路径）；便携 ini 配置；`scripts/package.ps1` 一键打包 |
 
 ## 本轮修掉的问题
 
@@ -39,6 +40,9 @@
 - 翻译回归：`translate_cli` + `tests/translate_samples.txt`，中文/英语/日语/韩语四向各 7/7 非空，单句 1.1–1.8 秒，无空译、无第二语言行。
 - 需求达成（对照 ROADMAP v5）：M1–M3 完成；M4 除"AI 字幕端到端体验"外完成；M5 进行中（已完成：D-02 模型路径配置化、ACCEPTANCE 清单、纯函数单测、CI 工作流与依赖脚本；未完成：2 小时长跑、软解端到端、CI 实跑）。
 - 模型定位：启动日志会打印 `resource ai/whisperModel found at: ...`；配置项 `ai/whisperModel`/`ai/translatorModel` 可覆盖，便携包把模型放 `models/` 即可被优先命中。
+- **便携配置（v0.5.4）**：`<exe>/MediaPlayer.ini` 的 `[ai]` 段优先于注册表，`whisperModel`/`vadModel`/`translatorModel` 写绝对路径或相对 exe 的路径；模板见 `scripts/MediaPlayer.ini.example`。
+- **缺模型的提示（v0.5.4）**：模型状态分 缺失/加载中/加载失败/就绪 四态，按钮点击时分别提示，缺模型会直接给出 `<exe>\models` 路径；不再把"没模型"显示成"加载中"。
+- **打包**：`powershell -ExecutionPolicy Bypass -File scripts\package.ps1` 产出 `dist\` 与 `MediaPlayer-v<版本>-win64.zip`（版本号从 `Version.h` 读，不会漂移）。
 
 ## 仓库治理（GitHub）
 

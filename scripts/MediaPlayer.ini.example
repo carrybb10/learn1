@@ -1,0 +1,13 @@
+; 便携配置示例。复制为 MediaPlayer.ini 放在 MediaPlayer.exe 旁边即可生效。
+; 优先级：本文件 > 注册表 HKCU\Software\MediaPlayer\Config > exe 周边约定路径 > <exe>\models\
+; 相对路径按 exe 所在目录解析；写错时日志会 WARN 并继续尝试其它候选。
+
+[ai]
+; whisper ASR 模型（ggml-small.bin 约 465 MB；也可用 ggml-tiny.bin 换速度）
+whisperModel=models/ggml-small.bin
+
+; Silero VAD 模型（约 0.85 MB，缺了实时字幕不可用）
+vadModel=models/ggml-silero-v5.1.2.bin
+
+; 翻译模型（Hy-MT2 1.8B Q4_K_M，约 1.08 GB，缺了只做识别不翻译）
+translatorModel=models/Hy-MT2-1.8B-Q4_K_M.gguf

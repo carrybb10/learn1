@@ -1,4 +1,4 @@
-﻿#include "AppPaths.h"
+#include "AppPaths.h"
 #include "Logger.h"
 
 #include <QCoreApplication>
@@ -10,6 +10,7 @@
 namespace {
 
 QStringList g_lastTried;
+QString g_configFile;
 
 QString absolute(const QString &path)
 {
@@ -29,6 +30,21 @@ QString tryRelative(const QString &baseDir, const QString &rel)
 
 namespace AppPaths {
 
+void setConfigFile(const QString &iniPath)
+{
+    g_configFile = iniPath;
+}
+
+QString configFile()
+{
+    return g_configFile;
+}
+
+QString modelsDirHint()
+{
+    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("models"));
+}
+
 QStringList lastTriedLocations()
 {
     return g_lastTried;
@@ -38,12 +54,35 @@ QString resolveResource(const QString &settingsKey, const QStringList &relativeC
 {
     g_lastTried.clear();
 
+    // 0) 便携 ini：便携包解压到任意目录后，用户改一个文本文件就能指过去，不用碰注册表
+    QString configured;
+    if (!settingsKey.isEmpty() && !g_configFile.isEmpty() && QFile::exists(g_configFile)) {
+        QSettings ini(g_configFile, QSettings::IniFormat);
+        configured = ini.value(settingsKey).toString().trimmed();
+        if (!configured.isEmpty()) {
+            QString path = configured;
+            if (QFileInfo(path).isRelative())
+                path = QDir(QCoreApplication::applicationDirPath()).filePath(path);
+            path = absolute(path);
+            if (QFile::exists(path)) {
+                LOG_INFO(LogModule::CORE, "resource %s from %s: %s",
+                         settingsKey.toUtf8().constData(), g_configFile.toUtf8().constData(),
+                         path.toUtf8().constData());
+                return path;
+            }
+            g_lastTried << path;
+            LOG_WARN(LogModule::CORE, "ini %s points to a missing file: %s",
+                     settingsKey.toUtf8().constData(), path.toUtf8().constData());
+        }
+    }
+
     // 1) 用户显式配置优先；配错了要明确告诉他，而不是静默回退到别的路径
     // 空 key 跳过：QSettings 遇到空 key 会打 "Empty key passed" 告警（单测走这条路径）
-    QString configured;
     if (!settingsKey.isEmpty()) {
         QSettings settings("MediaPlayer", "Config");
         configured = settings.value(settingsKey).toString().trimmed();
+    } else {
+        configured.clear();
     }
     if (!configured.isEmpty()) {
         QString path = configured;

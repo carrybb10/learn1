@@ -41,7 +41,15 @@ C:\Qt\6.12.0\msvc2022_64\bin\windeployqt.exe build\Release\MediaPlayer.exe
 ```
 
 模型不入仓库：把 `Hy-MT2-1.8B-Q4_K_M.gguf` 放进 `third_party/models/`，或把模型放在 exe 旁的 `models/` 目录（便携形态），
-也可以用配置项 `ai/translatorModel` / `ai/whisperModel` 指定绝对路径。启动日志会打印最终命中的路径。
+也可以在 exe 旁放 `MediaPlayer.ini`（模板见 `scripts/MediaPlayer.ini.example`）用 `[ai]` 段指定绝对路径，
+注册表 `HKCU\Software\MediaPlayer\Config` 同样可覆盖。启动日志会打印最终命中的路径。
+
+打包便携版（Qt 运行时 + 第三方 DLL，模型需自备）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package.ps1
+# -> dist\ 与 MediaPlayer-v<版本>-win64.zip
+```
 
 单元测试（不需要模型和显卡）：
 

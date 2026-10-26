@@ -1,4 +1,4 @@
-﻿# AGENTS.md — 本仓库的工作约定
+# AGENTS.md — 本仓库的工作约定
 
 给"下一个进入这个仓库的人/模型"看的。先读本文件，再读 `PROGRESS.md`，最后按需读 `docs/`。
 
@@ -30,7 +30,9 @@ cmake --build build --config Debug -j 8
 - **NV12 纹理不能用 `D3D11_USAGE_DYNAMIC`**：`CreateTexture2D` 会返回 `E_INVALIDARG(0x80070057)`，软解一帧都上传不了、表现为"有声音黑屏"。CPU 上传只能走 `D3D11_USAGE_STAGING` + `Map(D3D11_MAP_WRITE)`，再 `CopySubresourceRegion` 到池里的 DEFAULT 纹理。改这块先跑 `build\Debug\d3d11_probe.exe`。
 - **日志消息用英文/ASCII**：`LOG_*` 宏走 `QString::asprintf` 的 `%s`，中文会按 GBK 解码成乱码写进日志文件。注释可以中文，日志字符串不行。
 - 新增可在无 GUI 下验证的逻辑，优先放进 `translate_cli` 这类命令行入口，而不是只挂在按钮上。
-- 模型/资源路径不许硬拼 `../../third_party/`：走 `AppPaths::resolveResource()`（配置项 `ai/whisperModel`、`ai/translatorModel` 可覆盖）。
+- 模型/资源路径不许硬拼 `../../third_party/`：走 `AppPaths::resolveResource()`。查找顺序：`<exe>/MediaPlayer.ini` 的 `[ai]` 段 > 注册表 `HKCU\Software\MediaPlayer\Config` > exe 周边约定路径 > `<exe>\models`。
+- **"没有模型"和"模型正在加载"必须分开表达**：用 `main.cpp` 里的 `ModelState`（Missing/Loading/Ready/Failed）+ `AppPaths::modelsDirHint()` 提示应放位置。不要用 `isModelLoaded()` 单独判断——模型文件缺失时它永远是 false，UI 会一直显示"加载中"（v0.5.3 便携版就踩过这个）。
+- **`.ps1` 脚本内容必须全 ASCII**：Windows PowerShell 5.1 把无 BOM 的脚本按 ANSI 读，中文会变乱码并报 `The string is missing the terminator`，整个脚本不执行。需要中文的文本（如 `README-START.txt`）单独放 `.txt` 由脚本复制，别写进 `.ps1`。
 - **Silero VAD 流式推理前必须 `whisper_vad_reset_state()` 一次**：新分配的 backend buffer 不保证为 0，带着脏状态推理会系统性低估语音概率（实测 speech ratio 62.8% → 21.5%，断句全错）。之后用 `whisper_vad_detect_speech_no_reset()` 连续喂；seek/换片再 reset。
 
 ## 文档规则
@@ -38,6 +40,16 @@ cmake --build build --config Debug -j 8
 - `PROGRESS.md` 是唯一可原地覆盖的文档，每次改动都要更新"当前状态"。
 - 阶段总结/历史方案不改写，新写一份进 `docs/`，旧的留在 `docs/archive/`。
 - 顶层只保留 `README.md`、`AGENTS.md`、`PROGRESS.md`、`ROADMAP.md`，其余进 `docs/`。
+
+## 发布与便携包
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package.ps1   # -> dist\ + MediaPlayer-v<版本>-win64.zip
+```
+
+- 版本号只从 `Version.h` 读，zip 名、日志首行、关于框都跟着它走；发版先 bump 再打包。
+- `dist\` 里带 `models\PUT-MODELS-HERE.txt` 与 `MediaPlayer.ini.example`：模型不进包（约 1.5GB），用户放 `models\` 或改 ini 写绝对路径。
+- 便携包解压到任意目录都必须能跑：日志与崩溃报告写在 exe 同级的 `logs\`、`crash_reports\`，不要按 `../../` 推层级。
 
 ## 提交规则
 
