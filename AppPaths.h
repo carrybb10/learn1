@@ -1,4 +1,4 @@
-#ifndef APPPATHS_H
+﻿#ifndef APPPATHS_H
 #define APPPATHS_H
 
 #include <QString>
@@ -22,6 +22,7 @@ QStringList lastTriedLocations();
 // 两个模型在各部署形态下的常见位置（按优先级）
 QStringList whisperModelCandidates();
 QStringList translatorModelCandidates();
+QStringList vadModelCandidates();
 
 } // namespace AppPaths
 

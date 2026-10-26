@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)
 project(MediaPlayer)
 
 # 1. 配置Qt6路径（也可以通过命令行传入）
@@ -44,6 +44,7 @@ qt_add_executable(MediaPlayer
     AudioRingBuffer.cpp
     VadSegmenter.cpp
     SileroVad.cpp
+    RealtimeSubtitleWorker.cpp
     PlayerController.cpp
     VideoWidget.cpp
     D3D11Renderer.cpp
@@ -129,6 +130,27 @@ add_custom_command(TARGET vad_cli POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     ${WHISPER_DLLS}
     $<TARGET_FILE_DIR:vad_cli>
+)
+
+# 8.7 实时字幕端到端工具：wav -> 环形缓冲 -> VAD -> whisper -> 翻译，不开窗口
+add_executable(rt_cli
+    tools/rt_cli.cpp
+    RealtimeSubtitleWorker.cpp
+    AudioRingBuffer.cpp
+    VadSegmenter.cpp
+    SileroVad.cpp
+    WhisperTranscriber.cpp
+    Translator.cpp
+    Logger.cpp
+)
+target_include_directories(rt_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rt_cli PRIVATE whisper llama Qt6::Core)
+
+add_custom_command(TARGET rt_cli POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${WHISPER_DLLS}
+    ${LLAMA_DLLS}
+    $<TARGET_FILE_DIR:rt_cli>
 )
 
 # 9. 纯函数单元测试：不加载模型、不开窗口、不碰 D3D11，秒级返回

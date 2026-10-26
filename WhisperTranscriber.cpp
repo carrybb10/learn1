@@ -1,4 +1,4 @@
-#include "WhisperTranscriber.h"
+﻿#include "WhisperTranscriber.h"
 #include <QDebug>
 #include <whisper.h>
 
@@ -113,7 +113,7 @@ QVector<TranscriptSegment> WhisperTranscriber::transcribe(const QVector<float> &
         qDebug() << "[Whisper] 自动检测语言";
     }
 
-    params.n_threads = 4;
+    params.n_threads = qMax(1, qMin(8, QThread::idealThreadCount()));
     params.no_context = true;
     params.single_segment = false;
     // 让 whisper_full 能在 cancel()/析构时提前返回（原本只能整段跑完）

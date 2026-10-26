@@ -17,6 +17,7 @@
 | `v0.4.8` | 软解黑屏修复（NV12 上传纹理改 STAGING）+ `d3d11_probe` 回归 + CI 首跑修复 |
 | `v0.5.0` | M5 质量基线完成：105 分钟长跑无崩溃、seek 无卡顿；实时字幕音频输入改用 60s 环形缓冲 |
 | `v0.5.1` | Silero VAD 分段链路打通：`SileroVad` + `VadSegmenter` + `vad_cli`，流式与整段结果一致 |（CI run 40337277482 通过）
+| `v0.5.2` | 实时字幕接通播放链路：`RealtimeSubtitleWorker`（环形缓冲 -> VAD -> whisper -> 翻译）+ `rt_cli` 端到端工具；whisper 线程数随核数提升 |
 
 ## 本轮修掉的问题
 
@@ -58,10 +59,10 @@
 3. 翻译对"中文目标 + 日语源"的简体/繁体倾向依赖模型自身，未做后处理归一。
 4. `main.cpp` 965 行、`PlayerController.cpp` 1251 行仍是单文件单类，拆分方案见 `docs/REFACTOR_PLAN.md`（未执行）。
 5. 自动化测试覆盖纯函数 26 断言 + D3D11 纹理探针（ctest 2/2）；播放链路仍靠 `docs/ACCEPTANCE.md` 手动回归。CI 工作流已写但**未在 Actions 上跑过一次**。
-6. Silero VAD 只出现在许可清单与计划文档里，**未实现**；不要对外宣称有 VAD。
+6. Silero VAD 已实现（`SileroVad` + `VadSegmenter` + `vad_cli` 自检），但实时链路只在小样音频（jfk.wav）上验证过，**没在真实视频上做端到端延迟实测**。
 
 ## 下一步（按 ROADMAP v5）
 
 1. **M5 质量基线**（已完成：D-02 模型路径配置化、ACCEPTANCE 清单、纯函数单测、CI 骨架；未完成：2 小时长跑 + 切换 50 次、软解回退端到端、CI 实跑）。
-2. **M6 实时字幕（进行中）**：环形缓冲 + VAD 分段已完成；下一步把 `RealtimeSubtitleWorker` 接到播放线程（环形缓冲 → VAD → 分段送 whisper → 翻译），再补端到端延迟打点，目标 <= 8s。
+2. **M6（进行中，实时链路已接通）**：环形缓冲 + VAD 分段 + `RealtimeSubtitleWorker` 已完成；剩 ①真实视频上的端到端延迟打点（目标 <= 8s） ②句尾 flush（停止/静音收尾时补最后一段） ③分段过长时的合并策略（whisper 单次调用成本固定约 30s 编码窗口，段越碎越亏） ④翻译延迟占比实测。
 3. 拆文件仍登记为技术债 D-01，按需抽取，不作为独立任务（触发条件见 `docs/REFACTOR_PLAN.md`）。

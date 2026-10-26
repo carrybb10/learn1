@@ -1,4 +1,4 @@
-#include "AppPaths.h"
+﻿#include "AppPaths.h"
 #include "Logger.h"
 
 #include <QCoreApplication>
@@ -110,6 +110,16 @@ QStringList translatorModelCandidates()
         QStringLiteral("../../third_party/models/Hy-MT2-1.8B-Q4_K_M.gguf"),
         QStringLiteral("../third_party/models/Hy-MT2-1.8B-Q4_K_M.gguf"),
         QStringLiteral("third_party/models/Hy-MT2-1.8B-Q4_K_M.gguf"),
+    };
+}
+
+QStringList vadModelCandidates()
+{
+    return {
+        QStringLiteral("models/ggml-silero-v5.1.2.bin"),
+        QStringLiteral("../../third_party/whisper.cpp/models/ggml-silero-v5.1.2.bin"),
+        QStringLiteral("../third_party/whisper.cpp/models/ggml-silero-v5.1.2.bin"),
+        QStringLiteral("third_party/whisper.cpp/models/ggml-silero-v5.1.2.bin"),
     };
 }
 

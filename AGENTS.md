@@ -1,4 +1,4 @@
-# AGENTS.md — 本仓库的工作约定
+﻿# AGENTS.md — 本仓库的工作约定
 
 给"下一个进入这个仓库的人/模型"看的。先读本文件，再读 `PROGRESS.md`，最后按需读 `docs/`。
 
@@ -47,6 +47,8 @@ cmake --build build --config Debug -j 8
 
 ## 测试
 
+- 实时字幕链路自检：`build\Release\rt_cli.exe --wav <16k wav> --asr-model <ggml> --vad-model <silero> [--lang 中文]`，终端逐行打印 `[t0 - t1] proc lag 文本`。
+- whisper 单次调用成本约等于一个 30s 编码窗口，与音频长短基本无关：tiny 约 0.6s/段，small 约 3.3s/段（8 线程）。所以段切得越碎越亏，实时链路要控制段数与段长。
 - `tests/translate_samples.txt` 是翻译链路的固定语料（7 句，EN/JA/ZH/KO/FR）。
 - 改 `Translator` 后必须跑一次 `translate_cli`，确认四语目标各 7/7 非空、无第二语言行。
 - 崩溃排查：`crash_reports/*.txt` 现在含符号化调用栈（`模块!函数+偏移 (文件:行)`），先看栈再看 `.dmp`。

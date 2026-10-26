@@ -1,6 +1,7 @@
-#include <QApplication>
+﻿#include <QApplication>
 #include "Version.h"
 #include "AppPaths.h"
+#include "RealtimeSubtitleWorker.h"
 #include <QMainWindow>
 #include <QWidget>
 #include <QVBoxLayout>
@@ -163,6 +164,13 @@ int main(int argc, char *argv[])
     aiBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#4a4a4a;}");
     aiBtn->setToolTip("开启/停止AI语音识别字幕");
     settingsLayout->addWidget(aiBtn);
+
+    // 实时字幕：边播边出字（环形缓冲 -> VAD -> whisper -> 翻译）
+    QPushButton *rtBtn = new QPushButton("实时字幕", settingsBar);
+    rtBtn->setFixedSize(64, 24);
+    rtBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#4a4a4a;}");
+    rtBtn->setToolTip("开启/停止实时字幕（播放中边播边识别）");
+    settingsLayout->addWidget(rtBtn);
 
     // AI翻译目标语言选择（T4.8）
     QComboBox *translateLangCombo = new QComboBox(settingsBar);
@@ -363,6 +371,7 @@ int main(int argc, char *argv[])
     // ===== Whisper AI 识别（T4.8 验证） =====
     WhisperTranscriber *whisper = new WhisperTranscriber(&window);
     bool aiRecording = false;
+    bool rtActive = false;
     const QString whisperModelPath = AppPaths::resolveResource(QStringLiteral("ai/whisperModel"),
                                                                AppPaths::whisperModelCandidates());
     if (whisperModelPath.isEmpty()) {
@@ -386,6 +395,19 @@ int main(int argc, char *argv[])
             translator->loadModelAsync(translatorModelPath);
         });
     }
+
+    // ===== 实时字幕工作线程 =====
+    RealtimeSubtitleWorker *rtWorker = new RealtimeSubtitleWorker();
+    QThread *rtThread = new QThread(&window);
+    rtWorker->moveToThread(rtThread);
+    rtWorker->setSource(
+        [player]() { return player->audioRingPosition(); },
+        [player](qint64 absStart, float *out, int maxCount) { return player->copyAudioRingFrom(absStart, out, maxCount); });
+    rtWorker->setEngines(whisper, translator);
+    QObject::connect(rtThread, &QThread::started, rtWorker, &RealtimeSubtitleWorker::start);
+    QObject::connect(rtThread, &QThread::finished, rtWorker, &QObject::deleteLater);
+    QObject::connect(player, &PlayerController::seekStarted, rtWorker, &RealtimeSubtitleWorker::resetTimeline,
+                     Qt::QueuedConnection);
 
     QObject::connect(translator, &Translator::modelLoaded, [&](bool success, const QString &error) {
         if (success) {
@@ -781,6 +803,68 @@ int main(int argc, char *argv[])
             showNotification(QString("截图已保存：%1").arg(filename));
         } else {
             showNotification("截图保存失败");
+        }
+    });
+
+    // 实时字幕：文本直接进悬浮字幕条（按到达顺序显示，不参与 cue 时间轴）
+    QObject::connect(rtWorker, &RealtimeSubtitleWorker::subtitleReady, &window,
+                     [&](const QString &text, double t0, double t1, double procMs, double lagSec) {
+        if (text.isEmpty()) return;
+        subtitleLabel->setText(text);
+        subtitleLabel->setMaximumWidth(static_cast<int>(window.width() * 0.8));
+        subtitleLabel->adjustSize();
+        positionSubtitle();
+        subtitleLabel->show();
+        subtitleLabel->raise();
+        LOG_INFO(LogModule::AI_ASR, "realtime subtitle %.1f-%.1fs proc %.0fms lag %.1fs",
+                 t0, t1, procMs, lagSec);
+    }, Qt::QueuedConnection);
+
+    QObject::connect(rtWorker, &RealtimeSubtitleWorker::statusChanged, &window, [&](const QString &status) {
+        showNotification(status);
+    }, Qt::QueuedConnection);
+
+    QObject::connect(rtWorker, &RealtimeSubtitleWorker::errorOccurred, &window, [&](const QString &err) {
+        showNotification("实时字幕：" + err);
+        rtBtn->setText("实时字幕");
+        rtBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#4a4a4a;}");
+    }, Qt::QueuedConnection);
+
+    QObject::connect(rtBtn, &QPushButton::clicked, [&]() {
+        if (!rtActive) {
+            if (!whisper->isModelLoaded()) {
+                showNotification("语音识别模型还在加载，请稍候");
+                return;
+            }
+            const QString vadPath = AppPaths::resolveResource(QStringLiteral("ai/vadModel"),
+                                                              AppPaths::vadModelCandidates());
+            if (vadPath.isEmpty()) {
+                showNotification("缺少 VAD 模型（third_party/whisper.cpp/models/ggml-silero-v5.1.2.bin）");
+                return;
+            }
+
+            RealtimeSubtitleWorker::Config cfg;
+            cfg.vadModelPath = vadPath;
+            cfg.asrLanguage = "auto";
+            const QString lang = translateLangCombo->currentData().toString();
+            cfg.targetLang = (lang == "original" || !translator->isModelLoaded()) ? QString() : lang;
+            rtWorker->configure(cfg);
+
+            player->clearSubtitle();
+            player->setAudioRingEnabled(true);
+            rtThread->start();
+            rtActive = true;
+            rtBtn->setText("停止实时");
+            rtBtn->setStyleSheet("QPushButton{color:white;background:#d4380d;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#e8542a;}");
+        } else {
+            rtActive = false;
+            rtWorker->requestStop();   // 线程安全：正在识别也能尽快退出
+            rtThread->quit();
+            rtThread->wait();          // 最多等一段识别的时长
+            player->setAudioRingEnabled(false);
+            rtBtn->setText("实时字幕");
+            rtBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#4a4a4a;}");
+            subtitleLabel->hide();
         }
     });
 
