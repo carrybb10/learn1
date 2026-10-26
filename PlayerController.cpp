@@ -556,6 +556,7 @@ void PlayerController::performSeek()
     if (m_audioTapEnabled) {
         QMutexLocker tapLocker(&m_audioTapMutex);
         m_audioTapBuffer.clear();
+        m_audioRing.clear();  // 时间线不连续，实时字幕消费者要重新对齐
         if (m_audioTapSwr) {
             swr_free(&m_audioTapSwr);
             m_audioTapSwr = nullptr;
@@ -835,8 +836,8 @@ void PlayerController::audioDecodeLoop()
                 av_freep(&outBuffer);
             }
 
-            // AudioTap：将原始帧转换为16kHz mono float32并追加到缓冲区
-            if (m_audioTapEnabled) {
+            // AudioTap：把原始帧转成 16kHz mono float32，离线录制与实时字幕共用这一次转换
+            if (m_audioTapEnabled || m_audioRingEnabled) {
                 QMutexLocker tapLocker(&m_audioTapMutex);
                 if (!m_audioTapSwr) {
                     m_audioTapSwr = swr_alloc();
@@ -862,9 +863,14 @@ void PlayerController::audioDecodeLoop()
                             int tapConverted = swr_convert(m_audioTapSwr, (uint8_t**)&tapBuffer, tapOutSamples,
                                 (const uint8_t**)frame->data, frame->nb_samples);
                             if (tapConverted > 0) {
-                                int oldSize = m_audioTapBuffer.size();
-                                m_audioTapBuffer.resize(oldSize + tapConverted);
-                                memcpy(m_audioTapBuffer.data() + oldSize, tapBuffer, tapConverted * sizeof(float));
+                                if (m_audioRingEnabled) {
+                                    m_audioRing.push(tapBuffer, tapConverted);
+                                }
+                                if (m_audioTapEnabled) {
+                                    int oldSize = m_audioTapBuffer.size();
+                                    m_audioTapBuffer.resize(oldSize + tapConverted);
+                                    memcpy(m_audioTapBuffer.data() + oldSize, tapBuffer, tapConverted * sizeof(float));
+                                }
                             }
                             av_freep(&tapBuffer);
                         }
@@ -1189,6 +1195,34 @@ void PlayerController::startAudioTap()
     m_audioTapBuffer.clear();
     m_audioTapEnabled = true;
     qDebug() << "[AudioTap] 开始录制";
+}
+
+void PlayerController::setAudioRingEnabled(bool enabled)
+{
+    QMutexLocker locker(&m_audioTapMutex);
+    if (m_audioRingEnabled == enabled) {
+        return;
+    }
+    m_audioRingEnabled = enabled;
+    m_audioRing.clear();
+    // 两个消费者都关了才释放转换器
+    if (!m_audioTapEnabled && m_audioTapSwr) {
+        swr_free(&m_audioTapSwr);
+        m_audioTapSwr = nullptr;
+    }
+    qDebug() << "[AudioRing] enabled:" << enabled << "capacity:" << m_audioRing.capacity();
+}
+
+qint64 PlayerController::audioRingPosition() const
+{
+    QMutexLocker locker(&m_audioTapMutex);
+    return m_audioRing.writePosition();
+}
+
+int PlayerController::copyAudioRingFrom(qint64 absStart, float *out, int maxCount) const
+{
+    QMutexLocker locker(&m_audioTapMutex);
+    return m_audioRing.copyFrom(absStart, out, maxCount);
 }
 
 void PlayerController::stopAudioTap()

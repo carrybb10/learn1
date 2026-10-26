@@ -12,6 +12,7 @@
 #include <QDateTime>
 #include <atomic>
 
+#include "AudioRingBuffer.h"
 #include "SubtitleParser.h"
 #include <SDL.h>
 #include <d3d11.h>
@@ -75,6 +76,13 @@ public:
     void stopAudioTap();            // 停止录制
     bool isAudioTapEnabled() const { return m_audioTapEnabled; }
     QVector<float> getAudioTapSamples() const;  // 获取16kHz mono float32样本
+
+    // 实时字幕输入：定长环形缓冲（默认 60 秒），与离线录制互不影响。
+    // 打开后音频线程持续写入，消费者用 audioRingPosition() 记进度、copyAudioRingFrom() 取增量。
+    void setAudioRingEnabled(bool enabled);
+    bool isAudioRingEnabled() const { return m_audioRingEnabled; }
+    qint64 audioRingPosition() const;
+    int copyAudioRingFrom(qint64 absStart, float *out, int maxCount) const;
 
     // 诊断状态（T4.9）
     struct DiagnosticStats {
@@ -214,8 +222,12 @@ private:
     // AudioTap（T4.8）：录制16kHz mono float32音频供whisper识别
     bool m_audioTapEnabled = false;
     SwrContext *m_audioTapSwr = nullptr;
-    QVector<float> m_audioTapBuffer;  // 16kHz mono float32
+    QVector<float> m_audioTapBuffer;  // 16kHz mono float32（离线录制，按需增长）
     mutable QMutex m_audioTapMutex;
+
+    // 实时字幕：固定容量，避免长时间播放把内存吃光
+    bool m_audioRingEnabled = false;
+    AudioRingBuffer m_audioRing;
 };
 
 #endif // PLAYERCONTROLLER_H

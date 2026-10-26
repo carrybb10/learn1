@@ -41,6 +41,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 qt_add_executable(MediaPlayer
     main.cpp
     AppPaths.cpp
+    AudioRingBuffer.cpp
     PlayerController.cpp
     VideoWidget.cpp
     D3D11Renderer.cpp
@@ -117,6 +118,7 @@ add_custom_command(TARGET translate_cli POST_BUILD
 enable_testing()
 add_executable(unit_tests
     tests/unit_tests.cpp
+    AudioRingBuffer.cpp
     Translator.cpp
     AppPaths.cpp
     Logger.cpp

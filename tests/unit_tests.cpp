@@ -1,4 +1,4 @@
-// 纯函数单元测试：不加载模型、不开窗口、不碰 D3D11。
+﻿// 纯函数单元测试：不加载模型、不开窗口、不碰 D3D11。
 // 覆盖翻译后处理（历史上出过"输出第二语言行/同语言被吞"的坑）与模型路径解析。
 // 运行：cmake --build build --config Debug --target unit_tests && ctest --test-dir build -C Debug
 
@@ -6,9 +6,11 @@
 #include <QDir>
 #include <QFile>
 #include <QStringList>
+#include <cmath>
 #include <cstdio>
 
 #include "AppPaths.h"
+#include "AudioRingBuffer.h"
 #include "Translator.h"
 
 static int g_failed = 0;
@@ -24,6 +26,14 @@ static void report(bool ok, const char *expr, const QString &detail)
 }
 
 #define CHECK(cond) report((cond), #cond, QString())
+
+#define CHECK_NUM(actual, expected)                                                       \
+    do {                                                                                  \
+        const qint64 a_ = qint64(actual);                                                 \
+        const qint64 e_ = qint64(expected);                                               \
+        report(a_ == e_, #actual " == " #expected,                                        \
+               QString("got %1 want %2").arg(a_).arg(e_));                                \
+    } while (0)
 
 #define CHECK_EQ(actual, expected)                                                        \
     do {                                                                                  \
@@ -109,6 +119,57 @@ static void testAppPaths()
     QFile::remove(probeName);
 }
 
+static void testAudioRingBuffer()
+{
+    // 容量 8，只保留最新的 8 个样本，但绝对位置按写入总量推进
+    AudioRingBuffer ring(8);
+    CHECK_NUM(ring.capacity(), 8);
+    CHECK_NUM(ring.writePosition(), qint64(0));
+
+    float a[3] = { 1.0f, 2.0f, 3.0f };
+    ring.push(a, 3);
+    CHECK_NUM(ring.writePosition(), qint64(3));
+    CHECK_NUM(ring.availableFrom(0), 3);
+
+    float out[16] = { 0 };
+    CHECK_NUM(ring.copyFrom(0, out, 16), 3);
+    CHECK(std::abs(out[0] - 1.0f) < 1e-6f);
+    CHECK(std::abs(out[2] - 3.0f) < 1e-6f);
+
+    // 再写 7 个（总 10）：最早的 1、2 已被覆盖
+    float b[7] = { 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f };
+    ring.push(b, 7);
+    CHECK_NUM(ring.writePosition(), qint64(10));
+    CHECK_NUM(ring.oldestPosition(), qint64(2));
+    CHECK_NUM(ring.availableFrom(0), 8);
+    CHECK_NUM(ring.copyFrom(0, out, 16), 8);
+    CHECK(std::abs(out[0] - 3.0f) < 1e-6f);   // 从被保留的最旧样本开始
+    CHECK(std::abs(out[7] - 10.0f) < 1e-6f);
+
+    // 跨环归位取任意区间
+    CHECK_NUM(ring.copyFrom(6, out, 16), 4);
+    CHECK(std::abs(out[0] - 7.0f) < 1e-6f);
+    CHECK(std::abs(out[3] - 10.0f) < 1e-6f);
+
+    // 超过未来位置返回 0
+    CHECK_NUM(ring.copyFrom(10, out, 16), 0);
+    CHECK_NUM(ring.availableFrom(99), 0);
+
+    // 一次写入超过容量：只保留最后 8 个
+    AudioRingBuffer big(4);
+    float c[6] = { -1.0f, -2.0f, -3.0f, -4.0f, -5.0f, -6.0f };
+    big.push(c, 6);
+    CHECK_NUM(big.writePosition(), qint64(6));
+    CHECK_NUM(big.copyFrom(0, out, 8), 4);
+    CHECK(std::abs(out[0] + 3.0f) < 1e-6f);
+    CHECK(std::abs(out[3] + 6.0f) < 1e-6f);
+
+    // clear 后位置归零
+    big.clear();
+    CHECK_NUM(big.writePosition(), qint64(0));
+    CHECK_NUM(big.copyFrom(0, out, 8), 0);
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -117,6 +178,7 @@ int main(int argc, char **argv)
     testPostProcess();
     testBuildPrompt();
     testAppPaths();
+    testAudioRingBuffer();
 
     std::printf("%d checks, %d failed\n", g_total, g_failed);
     return g_failed == 0 ? 0 : 1;
