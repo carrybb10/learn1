@@ -27,6 +27,9 @@ QString modelsDirHint();
 // 最近一次 resolveResource 尝试过的位置，用于失败时一次性告诉用户找了哪里。
 QStringList lastTriedLocations();
 
+// GPU 构建（-DMP_CUDA=ON 时定义 MP_HAVE_CUDA）优先大模型；CPU 构建优先小模型。
+bool preferHeavyModels();
+
 // 两个模型在各部署形态下的常见位置（按优先级）
 QStringList whisperModelCandidates();
 QStringList translatorModelCandidates();

@@ -28,6 +28,8 @@ if (MP_CUDA)
     # RTX 50 系是 sm_120，需要 CUDA 12.8+；同时带上 8.9 兼容 40 系
     set(CMAKE_CUDA_ARCHITECTURES "89;120" CACHE STRING "" FORCE)
     message(STATUS "MP_CUDA=ON, CUDA ${CUDAToolkit_VERSION}, architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+    # 让业务代码知道"这张卡能吃到 GPU"：AppPaths 据此优先大模型（turbo / MT-Q8）
+    add_compile_definitions(MP_HAVE_CUDA)
 endif()
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)

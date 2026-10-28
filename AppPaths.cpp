@@ -30,6 +30,15 @@ QString tryRelative(const QString &baseDir, const QString &rel)
 
 namespace AppPaths {
 
+bool preferHeavyModels()
+{
+#ifdef MP_HAVE_CUDA
+    return true;
+#else
+    return false;
+#endif
+}
+
 void setConfigFile(const QString &iniPath)
 {
     g_configFile = iniPath;
@@ -132,34 +141,43 @@ QString resolveResource(const QString &settingsKey, const QStringList &relativeC
 QStringList whisperModelCandidates()
 {
     // 便携包（模型与 exe 同级）→ 仓库构建目录 build/Debug → 仓库根 → models/
-    // large-v3-turbo 排在最前：它把日语识别从"听错词"救回来（small 会把 あくび 听成 役日）
-    return {
+    // GPU 构建优先 large-v3-turbo：它把日语识别从"听错词"救回来（small 会把 あくび 听成 役日）；
+    // CPU 构建优先 small：turbo 在 CPU 上只有约 0.9 倍实时，延迟会明显变差。
+    const QStringList turbo = {
         QStringLiteral("models/ggml-large-v3-turbo.bin"),
         QStringLiteral("../../third_party/whisper.cpp/models/ggml-large-v3-turbo.bin"),
         QStringLiteral("../third_party/whisper.cpp/models/ggml-large-v3-turbo.bin"),
         QStringLiteral("third_party/whisper.cpp/models/ggml-large-v3-turbo.bin"),
+    };
+    const QStringList small = {
         QStringLiteral("models/ggml-small.bin"),
         QStringLiteral("../../third_party/whisper.cpp/models/ggml-small.bin"),
         QStringLiteral("../third_party/whisper.cpp/models/ggml-small.bin"),
         QStringLiteral("third_party/whisper.cpp/models/ggml-small.bin"),
+    };
+    const QStringList base = {
         QStringLiteral("models/ggml-base.bin"),
         QStringLiteral("../../third_party/whisper.cpp/models/ggml-base.bin"),
     };
+    return preferHeavyModels() ? (turbo + small + base) : (small + turbo + base);
 }
 
 QStringList translatorModelCandidates()
 {
-    // Q8 优先：显存够时译文比 Q4 稳；显存紧可用环境变量 MP_MT_GPU_LAYERS 或换回 Q4
-    return {
+    // GPU 构建优先 Q8：显存够时译文比 Q4 稳；CPU 构建优先 Q4：Q8 权重 1.9GB，CPU 上更慢。
+    const QStringList q8 = {
         QStringLiteral("models/Hy-MT2-1.8B-Q8_0.gguf"),
         QStringLiteral("../../third_party/models/Hy-MT2-1.8B-Q8_0.gguf"),
         QStringLiteral("../third_party/models/Hy-MT2-1.8B-Q8_0.gguf"),
         QStringLiteral("third_party/models/Hy-MT2-1.8B-Q8_0.gguf"),
+    };
+    const QStringList q4 = {
         QStringLiteral("models/Hy-MT2-1.8B-Q4_K_M.gguf"),
         QStringLiteral("../../third_party/models/Hy-MT2-1.8B-Q4_K_M.gguf"),
         QStringLiteral("../third_party/models/Hy-MT2-1.8B-Q4_K_M.gguf"),
         QStringLiteral("third_party/models/Hy-MT2-1.8B-Q4_K_M.gguf"),
     };
+    return preferHeavyModels() ? (q8 + q4) : (q4 + q8);
 }
 
 QStringList vadModelCandidates()
