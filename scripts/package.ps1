@@ -1,20 +1,27 @@
 # Package a portable Windows build.
-#   powershell -ExecutionPolicy Bypass -File scripts\package.ps1
-# Produces dist\ (runnable folder) and MediaPlayer-v<version>-win64.zip next to the repo root.
+#   powershell -ExecutionPolicy Bypass -File scripts\package.ps1          # CPU build (build\)
+#   powershell -ExecutionPolicy Bypass -File scripts\package.ps1 -Gpu     # CUDA build (build-cuda\)
+# Produces dist\ (runnable folder) and MediaPlayer-v<version>-win64[-cuda].zip next to the repo root.
+# The CUDA variant needs build-cuda\ to exist, see docs/THIRD_PARTY_VERSIONS.md.
 # Keep this file ASCII-only: Windows PowerShell 5.1 reads BOM-less scripts as ANSI.
 param(
-    [string]$Config = 'Release'
+    [string]$Config = 'Release',
+    [switch]$Gpu
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$build = Join-Path $root 'build'
+$buildName = if ($Gpu) { 'build-cuda' } else { 'build' }
+$build = Join-Path $root $buildName
 $dist = Join-Path $root 'dist'
+
+if (-not (Test-Path $build)) { throw "build directory not found: $build (use -Gpu only after configuring build-cuda)" }
 
 $versionLine = Select-String -Path (Join-Path $root 'Version.h') -Pattern 'MP_APP_VERSION\s+"([^"]+)"'
 if (-not $versionLine) { throw 'MP_APP_VERSION not found in Version.h' }
 $version = $versionLine.Matches[0].Groups[1].Value
-Write-Host "packaging MediaPlayer $version ($Config)"
+$flavor = if ($Gpu) { 'cuda' } else { 'cpu' }
+Write-Host "packaging MediaPlayer $version ($flavor / $Config)"
 
 & cmake --build $build --config $Config -j 8 --target MediaPlayer
 if ($LASTEXITCODE -ne 0) { throw "build failed: $LASTEXITCODE" }
@@ -60,7 +67,17 @@ $models = Join-Path $dist 'models'
 New-Item -ItemType Directory -Path $models | Out-Null
 Copy-Item (Join-Path $PSScriptRoot 'models-readme.txt') (Join-Path $models 'PUT-MODELS-HERE.txt')
 
-$zip = Join-Path $root "MediaPlayer-v$version-win64.zip"
+# A CUDA package that silently fell back to CPU is worse than no package.
+if ($Gpu) {
+    foreach ($required in @('ggml-cuda.dll', 'cudart64_12.dll', 'cublas64_12.dll')) {
+        if (-not (Test-Path (Join-Path $dist $required))) {
+            throw "CUDA build is missing $required in $dist"
+        }
+    }
+}
+
+$suffix = if ($Gpu) { '-cuda' } else { '' }
+$zip = Join-Path $root "MediaPlayer-v$version-win64$suffix.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $dist '*') -DestinationPath $zip
 

@@ -47,9 +47,12 @@ C:\Qt\6.12.0\msvc2022_64\bin\windeployqt.exe build\Release\MediaPlayer.exe
 打包便携版（Qt 运行时 + 第三方 DLL，模型需自备）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\package.ps1
-# -> dist\ 与 MediaPlayer-v<版本>-win64.zip
+powershell -ExecutionPolicy Bypass -File .\scripts\package.ps1        # CPU 版 -> MediaPlayer-v<版本>-win64.zip
+powershell -ExecutionPolicy Bypass -File .\scripts\package.ps1 -Gpu   # CUDA 版 -> ...-win64-cuda.zip
 ```
+
+CUDA 版需要先用 `MP_CUDA=ON` 配置 `build-cuda\`（工具链细节见 `PROGRESS.md` 的「S3 GPU 路线」一节）。
+GPU 版把实时字幕延迟从 10s+ 压到 1.4–2.8s，代价是包体约 680MB（`cublasLt64_12.dll` 占大头）。
 
 单元测试（不需要模型和显卡）：
 

@@ -1,6 +1,6 @@
 # PROGRESS
 
-> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-10-28（v0.5.7 已发布；S3 GPU 路线进行中，卡在 MSVC 工具集）
+> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-10-28（v0.5.8 已发布；S3 GPU 路线已打通，实时字幕延迟降到 1.4–2.8s）
 
 ## 版本线
 
@@ -16,23 +16,32 @@
 | `v0.4.7` | 纯函数单测（26 断言）+ ctest 入口 + 最小 CI 工作流（未实跑） |
 | `v0.4.8` | 软解黑屏修复（NV12 上传纹理改 STAGING）+ `d3d11_probe` 回归 + CI 首跑修复 |
 | `v0.5.0` | M5 质量基线完成：105 分钟长跑无崩溃、seek 无卡顿；实时字幕音频输入改用 60s 环形缓冲 |
-| `v0.5.1` | Silero VAD 分段链路打通：`SileroVad` + `VadSegmenter` + `vad_cli`，流式与整段结果一致 |（CI run 40337277482 通过）
+| `v0.5.1` | Silero VAD 分段链路打通：`SileroVad` + `VadSegmenter` + `vad_cli`，流式与整段结果一致（CI run 40337277482 通过） |
 | `v0.5.2` | 实时字幕接通播放链路：`RealtimeSubtitleWorker`（环形缓冲 -> VAD -> whisper -> 翻译）+ `rt_cli` 端到端工具；whisper 线程数随核数提升 |
 | `v0.5.3` | 便携版把 `logs/`、`crash_reports/` 留在自己目录（原来写到上一级），重新打包 |
 | `v0.5.4` | 缺模型不再误报"加载中"（三态提示 + 应放路径）；便携 ini 配置；`scripts/package.ps1` 一键打包 |
 | `v0.5.5` | 依赖脚本加重试与体积校验（修 CI 上偶发的拉取失败）；版本号与 tag 对齐 |
 | `v0.5.6` | 实时字幕改成"整句攒批"再识别/翻译：VAD 段跨换气合并（1.2s 静音才算断句）、超过 6s 强制切、半句文本续接 |
 | `v0.5.7` | `scripts/package.ps1` 自己定位 `windeployqt`，缺 Qt DLL 直接报错（之前 PATH 没 Qt 时会静默打出坏包） |
+| `v0.5.8` | CUDA 构建打通（`build-cuda`）；VAD 吞吐修复（每 960ms 调一次，30s 音频 260→31 次调用）；翻译指令改到 user + 官方采样参数 + 风格约束；GPU 版打包 |
 
-## S3 GPU 路线（进行中，2026-10-28 暂停）
+## S3 GPU 路线（已完成，v0.5.8）
 
-目标：whisper turbo + Hy-MT2-1.8B Q8 都上 GPU，把实时字幕延迟从 10–13s 压到 2s 内（ROADMAP FR-14 ≤8s）。
+目标：whisper turbo + Hy-MT2-1.8B Q8 都上 GPU，把实时字幕延迟从 10–13s 压到 2s 级（ROADMAP FR-14 ≤8s）。
 
-- **已完成**：CUDA 12.9 工具链装好（`nvcc` 可用，VS 集成组件已补、MSBuild 规则已复制到 VS 的 `v180\BuildCustomizations`）；模型已下载 `ggml-large-v3-turbo.bin`、`Hy-MT2-1.8B-Q8_0.gguf`。
-- **代码已就位但默认关闭**：`CMakeLists.txt` 的 `MP_CUDA` 开关（开时 `find_package(CUDAToolkit)`、`GGML_CUDA=ON`、`CMAKE_CUDA_ARCHITECTURES "89;120"`、拷贝 `ggml-cuda` 与 `cudart64_*/cublas64_*/cublasLt64_*`）；`Translator` 的 `n_gpu_layers` 读 `MP_MT_GPU_LAYERS`（缺省 99）；`WhisperTranscriber` 在 **context params** 上设 `use_gpu`（`MP_ASR_CPU=1` 可强制 CPU）；模型候选顺序改为 turbo / Q8 优先、small / Q4 兜底。
-- **卡点**：`nvcc` 编译任何 `.cu` 都崩 `cudafe++ died with status 0xC0000005`。NVIDIA 论坛确认是 **VS2026 自带 MSVC 14.51 的兼容问题**（14.50.x 正常），本机只有 `14.51.36231`。补装 14.50 需要知道 VS18 的准确组件 ID（我两次猜的 ID 都没装出东西，`--installPath` 那次失败是路径空格没加引号）。
-- **恢复构建的方法**：`cmake -S . -B build -DMP_CUDA=OFF -DGGML_CUDA=OFF`（`build` 缓存里只要残留 `GGML_CUDA=ON`，CPU 配置也会去跑 `CompilerIdCUDA` 而失败）。
-- **下一步（用户已选 A）**：查 VS18 组件清单 → 装 MSVC 14.50 工具集 → `cmake -S . -B build -DMP_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="89;120"` 重建 → 用 `rt_cli` 复测延迟与显存占用；若 1080p 超过 6.5GB 再按"turbo 换 Q5_1 / Q8 换 Q6_K / n_ctx 降到 2048"降档。
+- **结果**：30s 日语片段（turbo + silero + Q8）4 条字幕、`lag 1.36–2.84s`、ASR+翻译 0.3–0.8s/句；显存占用约 4GB（8GB 卡余量充足）。
+- **工具链**：CUDA 12.9 + **MSVC 14.50**（`14.50.35717`）。VS2026 自带的 14.51 会让 `cudafe++` 崩 `0xC0000005`，必须退到 14.50。
+- **构建命令**（独立目录，不影响 CPU 的 `build\`）：
+  ```powershell
+  $env:CUDA_PATH_V12_9 = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9'
+  cmake -S . -B build-cuda -G "Visual Studio 18 2026" -A x64 -T "v145,version=14.50.35717" `
+        -DMP_CUDA=ON -DCMAKE_CUDA_FLAGS="-allow-unsupported-compiler" `
+        -DQt6_DIR="C:/Qt/6.12.0/msvc2022_64/lib/cmake/Qt6"
+  cmake --build build-cuda --config Release -j 8
+  ```
+  注意：工具集名是 `v145`；MSBuild 的 CUDA 规则读的是 `CUDA_PATH_V12_9`（不是 `CUDA_PATH`）；`-allow-unsupported-compiler` 是必需的。
+- **打包**：`scripts\package.ps1 -Gpu` 产出 `dist\` 与 `MediaPlayer-v<版本>-win64-cuda.zip`，并校验 `ggml-cuda.dll / cudart64_12.dll / cublas64_12.dll` 都在。
+- **运行期开关**：`MP_ASR_CPU=1` 强制 ASR 走 CPU；`MP_MT_GPU_LAYERS=<n>` 控制翻译层上 GPU 的张量层数（默认 99）；`MP_VAD_THREADS=<n>` 覆盖 VAD 线程数（默认核数/2，实测 1–4 线程比默认更快）。
 
 
 ## 本轮修掉的问题
@@ -51,13 +60,14 @@
 - **M6 实时字幕进度**：环形缓冲（60s、3.84MB 固定占用）→ VAD 分段 → whisper → 翻译已接通播放链路（`RealtimeSubtitleWorker`，v0.5.2），并有无 GUI 端到端工具 `rt_cli`。
 - **v0.5.6 翻译质量修复**：症状是「翻译基本不搭边」。取证结论：模型本身没问题，是**投喂的音频碎片**——VAD 在换气处断开后只有 1–3 秒，whisper 会丢词/幻觉（`ask not what your country` → 识别成 `What country can do for you?` → 译成「哪个国家能为你服务？」）。修复：VAD 段跨换气合并成整句（静音 ≥1.2s 才算断句）、最长 6s 强制切、识别结果若是半句先攒着等拼成完整句子再翻译。
 
-- 构建：`cmake --build build --config Debug -j 8` 通过，无新增告警（既有 `MSB8027` 来自 llama.cpp 同名源文件，可忽略）。
-- 翻译回归：`translate_cli` + `tests/translate_samples.txt`，中文/英语/日语/韩语四向各 7/7 非空，单句 1.1–1.8 秒，无空译、无第二语言行。
-- 需求达成（对照 ROADMAP v5）：M1–M3 完成；M4 除"AI 字幕端到端体验"外完成；M5 进行中（已完成：D-02 模型路径配置化、ACCEPTANCE 清单、纯函数单测、CI 工作流与依赖脚本；未完成：2 小时长跑、软解端到端、CI 实跑）。
+- **需求达成（对照 ROADMAP v5，截至 v0.5.8）**：M1–M4 完成；**M5 收尾中**（已完成：D-02 路径配置化、ACCEPTANCE 清单、74 条纯函数断言、CI 实跑；未完成：2 小时长跑只跑到 105 分钟、软解无真实 4K 片源回归、计划点名的 6 组单测未写、内存基线未记）；**M6 完成约 2/3**（环形缓冲 / Silero VAD / 分段 ASR 已完成，上下文翻译、GUI 延迟打点、流式未做）。
+- **v0.5.8 实时字幕现状（GPU）**：30s 日语片段 4 条字幕、延迟 1.36–2.84s、ASR+翻译 0.3–0.8s/句；VAD 从"每 100ms 调一次"改为"攒满 960ms 调一次"，同等音频调用数 260 → 31。
+- 构建：CPU 走 `cmake --build build --config Debug -j 8`；GPU 走 `build-cuda`（命令见上一节），两者互不影响。
+- 翻译回归：`translate_cli` + `tests/translate_samples.txt`，中文/英语/日语/韩语四向各 7/7 非空，单句 97–166ms（Q8 + GPU），无空译、无第二语言行。
 - 模型定位：启动日志会打印 `resource ai/whisperModel found at: ...`；配置项 `ai/whisperModel`/`ai/translatorModel` 可覆盖，便携包把模型放 `models/` 即可被优先命中。
 - **便携配置（v0.5.4）**：`<exe>/MediaPlayer.ini` 的 `[ai]` 段优先于注册表，`whisperModel`/`vadModel`/`translatorModel` 写绝对路径或相对 exe 的路径；模板见 `scripts/MediaPlayer.ini.example`。
 - **缺模型的提示（v0.5.4）**：模型状态分 缺失/加载中/加载失败/就绪 四态，按钮点击时分别提示，缺模型会直接给出 `<exe>\models` 路径；不再把"没模型"显示成"加载中"。
-- **打包**：`powershell -ExecutionPolicy Bypass -File scripts\package.ps1` 产出 `dist\` 与 `MediaPlayer-v<版本>-win64.zip`（版本号从 `Version.h` 读，不会漂移）。
+- **打包**：`scripts\package.ps1` 打 CPU 包（`MediaPlayer-v<版本>-win64.zip`），`scripts\package.ps1 -Gpu` 打 GPU 包（`...-win64-cuda.zip`，会校验 CUDA 三个 DLL 存在）；版本号从 `Version.h` 读，不会漂移。
 
 ## 仓库治理（GitHub）
 
@@ -79,12 +89,16 @@
 3. 翻译对"中文目标 + 日语源"的简体/繁体倾向依赖模型自身，未做后处理归一。
 4. `main.cpp` 965 行、`PlayerController.cpp` 1251 行仍是单文件单类，拆分方案见 `docs/REFACTOR_PLAN.md`（未执行）。
 5. 自动化测试：纯函数 74 断言 + D3D11 纹理探针（`ctest` 2/2）；播放链路仍靠 `docs/ACCEPTANCE.md` 手动回归。CI 已在 Actions 上跑通（v0.4.8 起每版绿）。
-6. **实时字幕延迟超标**：真实日语片段（Guilty Crown 30s）实测，`ggml-small` 下每 6s 句子耗时约 5s（识别 4.4s + 翻译 0.6s），字幕比画面晚 10–13s；`ggml-tiny` 约 3s/句、晚 8s 左右但识别质量下降。CPU 是硬瓶颈，要压到 ROADMAP 的 ≤8s 需要 GPU（CUDA 版 whisper）或换更快的识别模型。
-7. 翻译"不搭边"的根因已在 v0.5.6 处理（碎片投喂），但**没有在真实长片源上做整集回归**；模型替换（更大参数）暂不需要。
+6. **实时字幕延迟（已从 10–13s 降到 1.4–2.8s）**：GPU 版（turbo + Q8）达标；CPU 版仍是 10s+，官方包默认走 CPU，用户机器没有 NVIDIA 卡时会退化到 CPU 体验。发行说明里要写清这一点。
+7. 翻译"不搭边"的根因已在 v0.5.6 处理（碎片投喂），v0.5.8 又调了指令位置与风格约束；但**没有在真实长片源上做整集回归**。已知副作用：风格约束让 `あくび` 从"打哈欠"变成"打瞌睡"，属准确率回退，待补"不得改变具体动作含义"的约束。
+8. **停止时线程归属警告**：`rt_cli` 与 GUI 退出偶现 `QObject::killTimer: Timers cannot be stopped from another thread` —— `requestStop()` 投递到 worker 线程的 `stop` 没有按预期执行，待查（不影响结果，但属于未定义行为）。
+9. **VAD 与 ASR 在同一线程串行**：`lag` 里有一部分是排队时间；把 VAD 拆到独立线程或做流水线是 M6 的优化项。
 
-## 下一步（明天从这里继续）
+## 下一步（按顺序，做完一条再动下一条）
 
-1. **M6-a 真实片源回归（先做）**：用新包整集看一遍，记录「哪几句还是看不懂」——是识别错（人名/术语/漏词）还是译文错（语序/语气），这决定下一步调 ASR 还是 MT。命令行走 `rt_cli`，GUI 走 `dist/MediaPlayer.exe`。
-2. **M6-b 模型对比评测（有数据再换模型）**：把 30 秒–5 分钟真实语音的 ASR 原文存成语料，用 `translate_cli` 跑 Hy-MT2 与候选模型同一批句子，出对比表；只有确认 `ASR 原文正确、译文仍差` 才换翻译模型。
-3. **M6-c 延迟优化（进行中）**：当前 `small` 约 10–13s 延迟、`tiny` 约 8s，目标 ≤8s。已走 GPU 路线（见上面「S3 GPU 路线」），当前卡在 MSVC 14.50 工具集。
-4. 拆文件仍登记为技术债 D-01，按需抽取，不作为独立任务（触发条件见 `docs/REFACTOR_PLAN.md`）。
+1. **M6-a 真实片源回归**：用 `-Gpu` 包整集看一遍，记录"哪几句还是看不懂"，区分识别错（人名/术语/漏词）与译文错（语序/语气）。
+2. **M6-b 上下文翻译（T6.4）**：把前 1–2 句原文 + 自己的译文带进 prompt，证据见 `docs/` 里的调研结论（ACL Findings 2025 / WMT26）。
+3. **M6-c GUI 延迟打点（T6.5）**：把 `lag` 显示到字幕面板或诊断面板，替代现在只能看日志。
+4. **M6 收尾**：修 `killTimer` 线程归属、VAD 与 ASR 解耦、补 `あくび` 那类准确率约束，然后打 `v0.6.0`。
+5. **M5 补测**：计划点名的 6 组单测（`avToSdlFormat`/音量缩放/seek 换算/时钟插值/WAV 头/播放列表）+ 2 小时长跑 + 内存基线。
+6. 拆文件仍登记为技术债 D-01，按需抽取（触发条件见 `docs/REFACTOR_PLAN.md`）。
