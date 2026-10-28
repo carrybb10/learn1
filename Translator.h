@@ -18,6 +18,12 @@ struct TranslationResult {
     QString error;
 };
 
+// 一句"上文"：原文 + 已经产出的译文。只用于给下句判断指代/语气，不参与翻译。
+struct TranslationContextTurn {
+    QString source;
+    QString translation;
+};
+
 class Translator : public QObject
 {
     Q_OBJECT
@@ -34,6 +40,11 @@ public:
     // 同步翻译（阻塞调用，建议在后台线程使用）
     // targetLang: "中文" "英语" "日语" "韩语" 等
     QString translate(const QString &text, const QString &targetLang = "中文");
+
+    // 带上下文的同步翻译：context 是紧邻的前 1-2 句（原文 + 译文），
+    // 只用来消歧（代词、省略、专有名词），不会被翻译或复述。
+    QString translateWithContext(const QString &text, const QString &targetLang,
+                                 const QVector<TranslationContextTurn> &context);
 
     // 批量同步翻译（返回与输入等长的结果列表）
     QVector<TranslationResult> translateBatch(const QVector<QString> &texts, const QString &targetLang = "中文");
@@ -56,6 +67,12 @@ public:
     // 清理模型输出：去 chat 标记、去思考行、去标签前缀、去引号
     static QString postProcess(const QString &raw, const QString &targetLang);
 
+    // 把上文拼成 【背景信息】 段（官方 model card 的背景模板写法）；只取最近两句
+    static QString buildContextBlock(const QVector<TranslationContextTurn> &context);
+
+    // 模型偶尔不翻译原文，而是解释/复述我们写进 prompt 的提示语；识别出来以便退回无语境重翻
+    static bool looksLikePromptEcho(const QString &text);
+
 signals:
     void modelLoaded(bool success, const QString &error);
     void translateFinished(const TranslationResult &result);
@@ -77,7 +94,8 @@ private:
     QByteArray m_chatTemplate;            // 模型自带 chat 模板（gguf 元数据），为空则用 ChatML
 
     // 内部推理函数
-    QString buildChatPrompt(const QString &text, const QString &targetLang) const;
+    QString buildChatPrompt(const QString &text, const QString &targetLang,
+                            const QVector<TranslationContextTurn> &context) const;
     QString infer(const QString &prompt);
 };
 

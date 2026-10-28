@@ -132,24 +132,54 @@ QString Translator::buildPrompt(const QString &text, const QString &targetLang)
         .arg(targetLang, text);
 }
 
-QString Translator::buildChatPrompt(const QString &text, const QString &targetLang) const
+QString Translator::buildContextBlock(const QVector<TranslationContextTurn> &context)
+{
+    if (context.isEmpty())
+        return QString();
+
+    // 只带最近两句：再多会稀释指令，也白占 prompt 预算
+    const int first = qMax(0, context.size() - 2);
+    QString body;
+    int used = 0;
+    for (int i = first; i < context.size(); ++i) {
+        QString src = context[i].source.trimmed();
+        QString dst = context[i].translation.trimmed();
+        if (src.isEmpty() || dst.isEmpty())
+            continue;
+        if (src.size() > 160) src = src.left(160);
+        if (dst.size() > 160) dst = dst.left(160);
+        body += QStringLiteral("原文：%1\n译文：%2\n").arg(src, dst);
+        ++used;
+    }
+    if (used == 0)
+        return QString();
+
+    return QStringLiteral("\n\n参考上文（同一段对话的前一句，仅供理解指代和语气，不要翻译、不要复述）：\n") + body;
+}
+
+QString Translator::buildChatPrompt(const QString &text, const QString &targetLang,
+                                    const QVector<TranslationContextTurn> &context) const
 {
     // 指令放在 user 里，不给 system —— Hy-MT2 官方 model card 明确说模型没有默认
     // system_prompt，且所有示例（默认/风格/术语/背景）都把任务写进 user。
     // 风格用官方 Style 模板的写法；中文目标必须写明"简体"，否则会出繁体。
+    // 有上文时用官方【背景信息】+【待翻译文本】的写法，把要翻译的内容明确框住。
+    const QString contextBlock = buildContextBlock(context);
+    const QString payload = contextBlock.isEmpty() ? text : text + contextBlock;
+
     QString userPrompt;
     if (targetLang == "中文") {
         userPrompt = QStringLiteral(
             "请将以下文本翻译为简体中文（大陆规范汉字）。"
             "注意翻译的风格要严格符合【口语化、符合中文字幕习惯、简洁自然，不要逐字直译】。"
-            "只需要输出翻译后的结果，不要额外解释，不要保留原文。\n\n%1").arg(text);
+            "只需要输出翻译后的结果，不要额外解释，不要保留原文。\n\n%1").arg(payload);
     } else {
         userPrompt = QStringLiteral(
             "Please translate the following text into %1. "
             "The translation style must strictly conform to "
             "[colloquial, natural spoken %1, concise subtitle style, not word-for-word]. "
             "Only output the translated result without any additional explanation.\n\n%2")
-            .arg(targetLang, text);
+            .arg(targetLang, payload);
     }
 
     // 1. Hunyuan-MT 系（HY-MT1.5 / HY-MT2）：它的对话格式是自定义特殊 token，
@@ -178,6 +208,20 @@ QString Translator::buildChatPrompt(const QString &text, const QString &targetLa
     // 3. ChatML 兜底（Qwen 系）
     return QStringLiteral("<|im_start|>user\n%1<|im_end|>\n"
                           "<|im_start|>assistant\n").arg(userPrompt);
+}
+
+bool Translator::looksLikePromptEcho(const QString &text)
+{
+    static const QStringList markers = {
+        QStringLiteral("参考上文"), QStringLiteral("【背景信息】"),
+        QStringLiteral("【待翻译文本】"), QStringLiteral("同一段对话"),
+        QStringLiteral("仅供理解"), QStringLiteral("不要复述")
+    };
+    for (const QString &m : markers) {
+        if (text.contains(m))
+            return true;
+    }
+    return false;
 }
 
 bool Translator::looksLikeLanguage(const QString &text, const QString &lang)
@@ -411,6 +455,12 @@ QString Translator::infer(const QString &prompt)
 
 QString Translator::translate(const QString &text, const QString &targetLang)
 {
+    return translateWithContext(text, targetLang, QVector<TranslationContextTurn>());
+}
+
+QString Translator::translateWithContext(const QString &text, const QString &targetLang,
+                                         const QVector<TranslationContextTurn> &context)
+{
     QMutexLocker locker(&m_mutex);
     if (!m_llamaCtx) {
         return QString();
@@ -439,8 +489,14 @@ QString Translator::translate(const QString &text, const QString &targetLang)
             targetLang.toUtf8().constData(),
             filtered.toUtf8().constData());
 
-    QString prompt = buildChatPrompt(filtered, targetLang);
+    QString prompt = buildChatPrompt(filtered, targetLang, context);
     QString result = infer(prompt);
+
+    // 上下文把模型带偏时（回显提示语），宁可丢掉语境也不能出一条垃圾字幕
+    if (!context.isEmpty() && looksLikePromptEcho(result)) {
+        fprintf(stderr, "[Translator] Context echo detected, retrying without context\n");
+        result = infer(buildChatPrompt(filtered, targetLang, QVector<TranslationContextTurn>()));
+    }
 
     // 后处理：仅当模型把原文整段复制到译文开头时才剥离
     if (!result.isEmpty() && filtered.length() > 2 &&

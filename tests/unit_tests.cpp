@@ -90,6 +90,44 @@ static void testBuildPrompt()
     CHECK(prompt.contains(QString::fromUtf8("中文")));
 }
 
+static void testContextBlock()
+{
+    // 没有上文时不能凭空多出一段【背景信息】
+    CHECK(Translator::buildContextBlock({}).isEmpty());
+
+    // 一条上文：原文与译文都要出现，并且带明确的上文标记
+    QVector<TranslationContextTurn> one;
+    one.append({ QString::fromUtf8("すごいあくび"), QString::fromUtf8("好大的哈欠") });
+    const QString block1 = Translator::buildContextBlock(one);
+    CHECK(block1.contains(QString::fromUtf8("参考上文")));
+    CHECK(block1.contains(QString::fromUtf8("すごいあくび")));
+    CHECK(block1.contains(QString::fromUtf8("好大的哈欠")));
+
+    // 三条时只保留最近两条（早期的对话和当前句无关，还白占 prompt）
+    QVector<TranslationContextTurn> three;
+    three.append({ QString::fromUtf8("第一句原文"), QString::fromUtf8("第一句译文") });
+    three.append({ QString::fromUtf8("第二句原文"), QString::fromUtf8("第二句译文") });
+    three.append({ QString::fromUtf8("第三句原文"), QString::fromUtf8("第三句译文") });
+    const QString block3 = Translator::buildContextBlock(three);
+    CHECK(!block3.contains(QString::fromUtf8("第一句原文")));
+    CHECK(block3.contains(QString::fromUtf8("第二句原文")));
+    CHECK(block3.contains(QString::fromUtf8("第三句原文")));
+    CHECK(block3.indexOf(QString::fromUtf8("第二句原文"))
+          < block3.indexOf(QString::fromUtf8("第三句原文")));
+
+    // 空字段的上文直接丢弃，不能写出 "原文：/译文：" 这种空壳
+    QVector<TranslationContextTurn> hole;
+    hole.append({ QString(), QString::fromUtf8("只有译文") });
+    CHECK(Translator::buildContextBlock(hole).isEmpty());
+
+    // 带上下文时模型会"解释提示语"，这类输出必须被识别出来（否则字幕会出现整段提示语）
+    CHECK(Translator::looksLikePromptEcho(
+        QString::fromUtf8("参考上文（同一段对话的前一句，仅供理解指代和语气，不要翻译、不要复述）：")));
+    CHECK(Translator::looksLikePromptEcho(
+        QString::fromUtf8("【背景信息】以下是同一段对话里紧邻的前文")));
+    CHECK(!Translator::looksLikePromptEcho(QString::fromUtf8("嗯，大概就是那样吧。")));
+}
+
 static void testAppPaths()
 {
     const QStringList whisper = AppPaths::whisperModelCandidates();
@@ -290,6 +328,7 @@ int main(int argc, char **argv)
     testLooksLikeLanguage();
     testPostProcess();
     testBuildPrompt();
+    testContextBlock();
     testAppPaths();
     testAudioRingBuffer();
     testVadSegmenter();

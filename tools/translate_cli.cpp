@@ -24,6 +24,10 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
     QCommandLineParser parser;
     parser.addHelpOption();
+    parser.addOption(QCommandLineOption(
+        QStringLiteral("context-lines"),
+        QStringLiteral("carry the previous N source/translation pairs as context (0 = off)"),
+        QStringLiteral("n"), QStringLiteral("0")));
     parser.addOption({QStringLiteral("model"), QStringLiteral("gguf 模型路径"), QStringLiteral("path")});
     parser.addOption({QStringLiteral("lang"), QStringLiteral("目标语言，如 中文/英语/日语/韩语"), QStringLiteral("lang"), QStringLiteral("中文")});
     parser.addOption({QStringLiteral("input"), QStringLiteral("输入文件（UTF-8，一行一句），省略则读 stdin"), QStringLiteral("file")});
@@ -78,10 +82,18 @@ int main(int argc, char *argv[])
     }
     fprintf(stderr, "[model] load %lld ms\n", (long long)timer.elapsed());
 
+    // 上下文模式：把前 N 句的原文 + 已产出的译文喂给下一句，用来和"逐句独立翻译"做 A/B
+    const int contextLines = parser.value(QStringLiteral("context-lines")).toInt();
+    QVector<TranslationContextTurn> context;
+
     int failed = 0;
     for (int i = 0; i < sentences.size(); ++i) {
         timer.restart();
-        const QString out = translator.translate(sentences[i], targetLang);
+        const QString out = translator.translateWithContext(sentences[i], targetLang, context);
+        if (contextLines > 0 && !out.isEmpty() && out != sentences[i]) {
+            context.append({ sentences[i], out });
+            while (context.size() > contextLines) context.removeFirst();
+        }
         const qint64 ms = timer.elapsed();
         if (out.isEmpty()) ++failed;
         emitLine(QStringLiteral("%1\t%2\t%3\t%4")

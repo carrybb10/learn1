@@ -114,6 +114,7 @@ void RealtimeSubtitleWorker::stop()
     m_carryText.clear();
     m_carryEnd = -1;
     m_lastSegmentEnd = -1;
+    clearContext();      // 停止后重新开始是新的一段对话，旧上文不能再喂给模型
     emit statusChanged(tr("实时字幕已停止"));
 }
 
@@ -132,9 +133,13 @@ void RealtimeSubtitleWorker::rebase(qint64 samplePos)
         m_segmenter->reset();
     m_nextSample = samplePos;
     m_frameBase = samplePos;
-    // 时间线断了，攒到一半的整句不能再和后面的音频拼在一起
+    // 时间线断了，攒到一半的整句不能再和后面的音频拼在一起；
+    // 上文同理：seek 之后前面的对话和现在可能根本不相干
     m_pendingAudio.clear();
     m_lastSegmentEnd = -1;
+    m_carryText.clear();
+    m_carryEnd = -1;
+    clearContext();
 }
 
 void RealtimeSubtitleWorker::poll()
@@ -298,15 +303,25 @@ void RealtimeSubtitleWorker::flushUtterance()
     m_carryEnd = -1;
 
     const qint64 startSample = m_carryStart;
+    bool translatedOk = false;
     if (!m_cfg.targetLang.isEmpty() && m_translator && m_translator->isModelLoaded()) {
-        const QString translated = m_translator->translate(combined, m_cfg.targetLang);
-        if (!translated.isEmpty())
+        const QVector<TranslationContextTurn> ctx =
+            qEnvironmentVariableIsSet("MP_MT_NO_CONTEXT")
+                ? QVector<TranslationContextTurn>() : m_context;
+        const QString translated =
+            m_translator->translateWithContext(combined, m_cfg.targetLang, ctx);
+        if (!translated.isEmpty()) {
             text = translated;
-        else
+            translatedOk = (translated != combined);
+        } else {
             text = combined;
+        }
     } else {
         text = combined;
     }
+
+    if (translatedOk)
+        pushContext(combined, text);
 
     const qint64 lagSamples = std::max<qint64>(0, m_position() - s1);
     emit subtitleReady(text, double(startSample) / kSampleRate, double(s1) / kSampleRate,
@@ -327,13 +342,31 @@ void RealtimeSubtitleWorker::flushCarry()
     m_carryEnd = -1;
 
     QString out = text;
+    bool translatedOk = false;
     if (!m_cfg.targetLang.isEmpty() && m_translator && m_translator->isModelLoaded()) {
-        const QString translated = m_translator->translate(text, m_cfg.targetLang);
-        if (!translated.isEmpty())
+        const QVector<TranslationContextTurn> ctx =
+            qEnvironmentVariableIsSet("MP_MT_NO_CONTEXT")
+                ? QVector<TranslationContextTurn>() : m_context;
+        const QString translated = m_translator->translateWithContext(text, m_cfg.targetLang, ctx);
+        if (!translated.isEmpty()) {
             out = translated;
+            translatedOk = (translated != text);
+        }
     }
+    if (translatedOk)
+        pushContext(text, out);
 
     const qint64 lagSamples = std::max<qint64>(0, m_position() - endSample);
     emit subtitleReady(out, double(startSample) / kSampleRate, double(endSample) / kSampleRate,
                        0.0, double(lagSamples) / kSampleRate);
+}
+
+// 保留最近两句（原文 + 译文）作为下一句的语境；超过就丢最旧的
+void RealtimeSubtitleWorker::pushContext(const QString &source, const QString &translation)
+{
+    if (source.isEmpty() || translation.isEmpty())
+        return;
+    m_context.append({ source, translation });
+    while (m_context.size() > 2)
+        m_context.removeFirst();
 }

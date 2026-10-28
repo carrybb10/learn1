@@ -8,6 +8,7 @@
 #include <functional>
 
 #include "VadSegmenter.h"
+#include "Translator.h"
 
 class QTimer;
 class SileroVad;
@@ -92,6 +93,11 @@ private:
     QString m_carryText;
     qint64 m_carryStart = 0;
     qint64 m_carryEnd = -1;
+
+    // 最近一两句的原文 + 译文：给下一句当语境（代词、省略、人名一致）
+    QVector<TranslationContextTurn> m_context;
+    void pushContext(const QString &source, const QString &translation);
+    void clearContext() { m_context.clear(); }
 
     qint64 m_nextSample = 0;   // 下一个待送 VAD 的绝对样本位置
     qint64 m_frameBase = 0;    // 第 0 帧对应的绝对样本位置
