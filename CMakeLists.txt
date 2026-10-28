@@ -18,6 +18,17 @@ include_directories(${SDL2_ROOT}/include)
 link_directories(${SDL2_ROOT}/lib)
 
 # 3.5 集成 whisper.cpp（离线语音识别，T4.8）
+# 可选 CUDA 后端：-DMP_CUDA=ON（需要先装 CUDA Toolkit，nvcc 在 PATH 里）。
+# whisper 先 add_subdirectory，它自带的 ggml 会成为全局唯一 ggml 目标，
+# llama.cpp 见 ggml 已存在就直接复用（llama.cpp/CMakeLists.txt:220），所以只需开一次。
+option(MP_CUDA "Build ggml/whisper/llama with CUDA backend" OFF)
+if (MP_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    set(GGML_CUDA ON CACHE BOOL "" FORCE)
+    # RTX 50 系是 sm_120，需要 CUDA 12.8+；同时带上 8.9 兼容 40 系
+    set(CMAKE_CUDA_ARCHITECTURES "89;120" CACHE STRING "" FORCE)
+    message(STATUS "MP_CUDA=ON, CUDA ${CUDAToolkit_VERSION}, architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+endif()
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
@@ -101,6 +112,17 @@ file(GLOB SDL2_DLLS ${SDL2_ROOT}/lib/*.dll)
 # llama/whisper 的 DLL 在配置期还不在 build 目录，必须用 target 生成表达式定位
 set(LLAMA_DLLS $<TARGET_FILE:llama> $<TARGET_FILE:ggml> $<TARGET_FILE:ggml-base> $<TARGET_FILE:ggml-cpu>)
 set(WHISPER_DLLS $<TARGET_FILE:whisper>)
+set(CUDA_DLLS "")
+if (MP_CUDA)
+    # ggml-cuda 是独立后端 DLL；CUDA 运行时（cudart/cublas）也要进包，否则换机器启动即失败
+    if (TARGET ggml-cuda)
+        list(APPEND LLAMA_DLLS $<TARGET_FILE:ggml-cuda>)
+    endif()
+    file(GLOB CUDA_DLLS
+        ${CUDAToolkit_BIN_DIR}/cudart64_*.dll
+        ${CUDAToolkit_BIN_DIR}/cublas64_*.dll
+        ${CUDAToolkit_BIN_DIR}/cublasLt64_*.dll)
+endif()
 
 add_custom_command(TARGET MediaPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -108,6 +130,7 @@ add_custom_command(TARGET MediaPlayer POST_BUILD
     ${SDL2_DLLS}
     ${WHISPER_DLLS}
     ${LLAMA_DLLS}
+    ${CUDA_DLLS}
     $<TARGET_FILE_DIR:MediaPlayer>
 )
 

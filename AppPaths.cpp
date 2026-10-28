@@ -132,7 +132,12 @@ QString resolveResource(const QString &settingsKey, const QStringList &relativeC
 QStringList whisperModelCandidates()
 {
     // 便携包（模型与 exe 同级）→ 仓库构建目录 build/Debug → 仓库根 → models/
+    // large-v3-turbo 排在最前：它把日语识别从"听错词"救回来（small 会把 あくび 听成 役日）
     return {
+        QStringLiteral("models/ggml-large-v3-turbo.bin"),
+        QStringLiteral("../../third_party/whisper.cpp/models/ggml-large-v3-turbo.bin"),
+        QStringLiteral("../third_party/whisper.cpp/models/ggml-large-v3-turbo.bin"),
+        QStringLiteral("third_party/whisper.cpp/models/ggml-large-v3-turbo.bin"),
         QStringLiteral("models/ggml-small.bin"),
         QStringLiteral("../../third_party/whisper.cpp/models/ggml-small.bin"),
         QStringLiteral("../third_party/whisper.cpp/models/ggml-small.bin"),
@@ -144,7 +149,12 @@ QStringList whisperModelCandidates()
 
 QStringList translatorModelCandidates()
 {
+    // Q8 优先：显存够时译文比 Q4 稳；显存紧可用环境变量 MP_MT_GPU_LAYERS 或换回 Q4
     return {
+        QStringLiteral("models/Hy-MT2-1.8B-Q8_0.gguf"),
+        QStringLiteral("../../third_party/models/Hy-MT2-1.8B-Q8_0.gguf"),
+        QStringLiteral("../third_party/models/Hy-MT2-1.8B-Q8_0.gguf"),
+        QStringLiteral("third_party/models/Hy-MT2-1.8B-Q8_0.gguf"),
         QStringLiteral("models/Hy-MT2-1.8B-Q4_K_M.gguf"),
         QStringLiteral("../../third_party/models/Hy-MT2-1.8B-Q4_K_M.gguf"),
         QStringLiteral("../third_party/models/Hy-MT2-1.8B-Q4_K_M.gguf"),

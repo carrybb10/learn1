@@ -80,6 +80,14 @@ bool Translator::loadModel(const QString &modelPath)
     }
 
     llama_model_params modelParams = llama_model_default_params();
+    // 翻译层放到 GPU 上：llama.cpp 开了 GGML_CUDA 时 n_gpu_layers>0 才真正上卡，
+    // CPU 版本会忽略这个值。显存吃紧时用 MP_MT_GPU_LAYERS 调小或设 0 退回 CPU。
+    {
+        bool ok = false;
+        int layers = qEnvironmentVariableIntValue("MP_MT_GPU_LAYERS", &ok);
+        modelParams.n_gpu_layers = (ok && layers >= 0) ? layers : 99;
+        fprintf(stderr, "[Translator] n_gpu_layers = %d\n", modelParams.n_gpu_layers);
+    }
     m_llamaModel = llama_model_load_from_file(modelPath.toUtf8().constData(), modelParams);
     if (!m_llamaModel) {
         emit modelLoaded(false, "Failed to load model: " + modelPath);

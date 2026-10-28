@@ -1,4 +1,4 @@
-﻿#include "WhisperTranscriber.h"
+#include "WhisperTranscriber.h"
 #include <QDebug>
 #include <whisper.h>
 
@@ -42,7 +42,10 @@ bool WhisperTranscriber::loadModel(const QString &modelPath)
         m_whisperCtx = nullptr;
     }
 
-    m_whisperCtx = whisper_init_from_file(modelPath.toUtf8().constData());
+    // GPU 由 context params 控制，不在 whisper_full_params 里；构建未开 CUDA 时 whisper 会自行回退 CPU
+    whisper_context_params ctxParams = whisper_context_default_params();
+    ctxParams.use_gpu = !qEnvironmentVariableIsSet("MP_ASR_CPU");
+    m_whisperCtx = whisper_init_from_file_with_params(modelPath.toUtf8().constData(), ctxParams);
     if (!m_whisperCtx) {
         QString err = QString("Whisper模型加载失败: %1").arg(modelPath);
         qWarning() << "[Whisper]" << err;

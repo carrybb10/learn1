@@ -1,6 +1,6 @@
 # PROGRESS
 
-> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-10-26（v0.5.1）
+> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-10-28（v0.5.7 已发布；S3 GPU 路线进行中，卡在 MSVC 工具集）
 
 ## 版本线
 
@@ -22,6 +22,18 @@
 | `v0.5.4` | 缺模型不再误报"加载中"（三态提示 + 应放路径）；便携 ini 配置；`scripts/package.ps1` 一键打包 |
 | `v0.5.5` | 依赖脚本加重试与体积校验（修 CI 上偶发的拉取失败）；版本号与 tag 对齐 |
 | `v0.5.6` | 实时字幕改成"整句攒批"再识别/翻译：VAD 段跨换气合并（1.2s 静音才算断句）、超过 6s 强制切、半句文本续接 |
+| `v0.5.7` | `scripts/package.ps1` 自己定位 `windeployqt`，缺 Qt DLL 直接报错（之前 PATH 没 Qt 时会静默打出坏包） |
+
+## S3 GPU 路线（进行中，2026-10-28 暂停）
+
+目标：whisper turbo + Hy-MT2-1.8B Q8 都上 GPU，把实时字幕延迟从 10–13s 压到 2s 内（ROADMAP FR-14 ≤8s）。
+
+- **已完成**：CUDA 12.9 工具链装好（`nvcc` 可用，VS 集成组件已补、MSBuild 规则已复制到 VS 的 `v180\BuildCustomizations`）；模型已下载 `ggml-large-v3-turbo.bin`、`Hy-MT2-1.8B-Q8_0.gguf`。
+- **代码已就位但默认关闭**：`CMakeLists.txt` 的 `MP_CUDA` 开关（开时 `find_package(CUDAToolkit)`、`GGML_CUDA=ON`、`CMAKE_CUDA_ARCHITECTURES "89;120"`、拷贝 `ggml-cuda` 与 `cudart64_*/cublas64_*/cublasLt64_*`）；`Translator` 的 `n_gpu_layers` 读 `MP_MT_GPU_LAYERS`（缺省 99）；`WhisperTranscriber` 在 **context params** 上设 `use_gpu`（`MP_ASR_CPU=1` 可强制 CPU）；模型候选顺序改为 turbo / Q8 优先、small / Q4 兜底。
+- **卡点**：`nvcc` 编译任何 `.cu` 都崩 `cudafe++ died with status 0xC0000005`。NVIDIA 论坛确认是 **VS2026 自带 MSVC 14.51 的兼容问题**（14.50.x 正常），本机只有 `14.51.36231`。补装 14.50 需要知道 VS18 的准确组件 ID（我两次猜的 ID 都没装出东西，`--installPath` 那次失败是路径空格没加引号）。
+- **恢复构建的方法**：`cmake -S . -B build -DMP_CUDA=OFF -DGGML_CUDA=OFF`（`build` 缓存里只要残留 `GGML_CUDA=ON`，CPU 配置也会去跑 `CompilerIdCUDA` 而失败）。
+- **下一步（用户已选 A）**：查 VS18 组件清单 → 装 MSVC 14.50 工具集 → `cmake -S . -B build -DMP_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="89;120"` 重建 → 用 `rt_cli` 复测延迟与显存占用；若 1080p 超过 6.5GB 再按"turbo 换 Q5_1 / Q8 换 Q6_K / n_ctx 降到 2048"降档。
+
 
 ## 本轮修掉的问题
 
@@ -74,5 +86,5 @@
 
 1. **M6-a 真实片源回归（先做）**：用新包整集看一遍，记录「哪几句还是看不懂」——是识别错（人名/术语/漏词）还是译文错（语序/语气），这决定下一步调 ASR 还是 MT。命令行走 `rt_cli`，GUI 走 `dist/MediaPlayer.exe`。
 2. **M6-b 模型对比评测（有数据再换模型）**：把 30 秒–5 分钟真实语音的 ASR 原文存成语料，用 `translate_cli` 跑 Hy-MT2 与候选模型同一批句子，出对比表；只有确认 `ASR 原文正确、译文仍差` 才换翻译模型。
-3. **M6-c 延迟优化**：当前 `small` 约 10–13s 延迟、`tiny` 约 8s，目标 ≤8s。两条路：默认 tiny（先可用）或做 CUDA 版 whisper（要改构建）。
+3. **M6-c 延迟优化（进行中）**：当前 `small` 约 10–13s 延迟、`tiny` 约 8s，目标 ≤8s。已走 GPU 路线（见上面「S3 GPU 路线」），当前卡在 MSVC 14.50 工具集。
 4. 拆文件仍登记为技术债 D-01，按需抽取，不作为独立任务（触发条件见 `docs/REFACTOR_PLAN.md`）。

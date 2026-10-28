@@ -77,6 +77,9 @@ int main(int argc, char **argv)
     parser.addOption({"asr-model", "whisper ggml model", "path"});
     parser.addOption({"vad-model", "silero vad model", "path"});
     parser.addOption({"lang", "translate target (none = 只识别)", "lang", "none"});
+    parser.addOption({"asr-lang", "source language for whisper (auto = detect)", "lang", "auto"});
+    parser.addOption({"max-utterance-ms", "force flush a long utterance", "ms"});
+    parser.addOption({"gap-ms", "silence that ends a sentence", "ms"});
     parser.addOption({"speed", "feed speed multiplier (1 = realtime)", "x", "1.0"});
     parser.process(app);
 
@@ -84,6 +87,7 @@ int main(int argc, char **argv)
     const QString asrPath = parser.value("asr-model");
     const QString vadPath = parser.value("vad-model");
     const QString lang = parser.value("lang");
+    const QString asrLang = parser.value("asr-lang");
     const double speed = qMax(0.25, parser.value("speed").toDouble());
 
     QVector<float> pcm;
@@ -119,8 +123,13 @@ int main(int argc, char **argv)
     RealtimeSubtitleWorker worker;
     RealtimeSubtitleWorker::Config cfg;
     cfg.vadModelPath = vadPath;
+    cfg.asrLanguage = asrLang;
     cfg.targetLang = translate ? lang : QString();
     cfg.backlogDropSec = 15;
+    if (parser.isSet("max-utterance-ms"))
+        cfg.maxUtteranceMs = parser.value("max-utterance-ms").toInt();
+    if (parser.isSet("gap-ms"))
+        cfg.sentenceGapMs = parser.value("gap-ms").toInt();
     worker.configure(cfg);
     worker.setSource([&ring]() { return ring.writePosition(); },
                      [&ring](qint64 s, float *out, int n) { return ring.copyFrom(s, out, n); });
