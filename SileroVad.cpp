@@ -23,8 +23,12 @@ bool SileroVad::load(const QString &modelPath)
     }
 
     whisper_vad_context_params params = whisper_vad_default_context_params();
+    // VAD 图很小，线程开太多反而被线程池同步拖慢；MP_VAD_THREADS 可覆盖用于对比
     params.n_threads = qMax(1, QThread::idealThreadCount() / 2);
-    params.use_gpu = false;
+    if (qEnvironmentVariableIsSet("MP_VAD_THREADS")) {
+        params.n_threads = qMax(1, qEnvironmentVariableIntValue("MP_VAD_THREADS"));
+    }
+    params.use_gpu = false;   // 放 GPU 会崩（whisper_vad 的 backend 假设），别试
 
     m_ctx = whisper_vad_init_from_file_with_params(modelPath.toUtf8().constData(), params);
     if (!m_ctx) {

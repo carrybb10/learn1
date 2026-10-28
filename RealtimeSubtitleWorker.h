@@ -68,6 +68,7 @@ private:
     void handleSegments(const QVector<VadSegmenter::Segment> &segments);
     void appendToUtterance(qint64 s0, qint64 s1);
     void flushUtterance();
+    void flushCarry();
     QVector<float> takeSamples(qint64 start, qint64 count) const;
     void rebase(qint64 samplePos);
 
@@ -90,6 +91,7 @@ private:
     // 识别出来是半句时先攒着，等拼成完整句子再翻译（碎片直译一定跑偏）
     QString m_carryText;
     qint64 m_carryStart = 0;
+    qint64 m_carryEnd = -1;
 
     qint64 m_nextSample = 0;   // 下一个待送 VAD 的绝对样本位置
     qint64 m_frameBase = 0;    // 第 0 帧对应的绝对样本位置

@@ -127,49 +127,48 @@ bool Translator::loadModel(const QString &modelPath)
 
 QString Translator::buildPrompt(const QString &text, const QString &targetLang)
 {
-    // 纯文本降级路径：明确"只输出译文"的指令，避免模型续写解释
-    return QStringLiteral("把下面的文本翻译成%1，只输出译文，不要解释，不要重复原文：\n%2")
+    // 纯文本降级路径：没有对话模板时也得把"只输出译文"说清楚
+    return QStringLiteral("请将以下文本翻译为%1。只需要输出翻译后的结果，不要额外解释：\n\n%2")
         .arg(targetLang, text);
 }
 
 QString Translator::buildChatPrompt(const QString &text, const QString &targetLang) const
 {
-    // 字幕场景：单句、无上文。system 约束"只输出译文"，user 只放原文。
-    // 中文必须用中文写明"简体"，否则模型会输出繁体（训练语料里两种都有）
-    QString systemPrompt;
+    // 指令放在 user 里，不给 system —— Hy-MT2 官方 model card 明确说模型没有默认
+    // system_prompt，且所有示例（默认/风格/术语/背景）都把任务写进 user。
+    // 风格用官方 Style 模板的写法；中文目标必须写明"简体"，否则会出繁体。
+    QString userPrompt;
     if (targetLang == "中文") {
-        systemPrompt = QStringLiteral(
-            "你是一名专业的字幕翻译。把用户给出的文本翻译成简体中文（大陆规范汉字），"
-            "只输出译文，不要解释、不要加引号、不要保留原文、不要使用繁体字。");
+        userPrompt = QStringLiteral(
+            "请将以下文本翻译为简体中文（大陆规范汉字）。"
+            "注意翻译的风格要严格符合【口语化、符合中文字幕习惯、简洁自然，不要逐字直译】。"
+            "只需要输出翻译后的结果，不要额外解释，不要保留原文。\n\n%1").arg(text);
     } else {
-        systemPrompt = QStringLiteral(
-            "You are a professional subtitle translator. Translate the text into %1. "
-            "Output only the translation: no explanation, no notes, no quotes, no original text.")
-            .arg(targetLang);
+        userPrompt = QStringLiteral(
+            "Please translate the following text into %1. "
+            "The translation style must strictly conform to "
+            "[colloquial, natural spoken %1, concise subtitle style, not word-for-word]. "
+            "Only output the translated result without any additional explanation.\n\n%2")
+            .arg(targetLang, text);
     }
-    const QString userPrompt = text;
 
     // 1. Hunyuan-MT 系（HY-MT1.5 / HY-MT2）：它的对话格式是自定义特殊 token，
     //    llama_chat_apply_template 的预置模板表里没有，必须手工拼。
     if (m_chatTemplate.contains(QStringLiteral("<｜hy_User｜>").toUtf8())) {
-        return QStringLiteral("<｜hy_begin▁of▁sentence｜>%1<｜hy_place▁holder▁no▁3｜>"
-                              "<｜hy_User｜>%2<｜hy_Assistant｜>")
-            .arg(systemPrompt, userPrompt);
+        return QStringLiteral("<｜hy_begin▁of▁sentence｜><｜hy_User｜>%1<｜hy_Assistant｜>")
+            .arg(userPrompt);
     }
 
-    // 2. 其它模型：让 llama.cpp 用它认识的预置模板
+    // 2. 其它模型：让 llama.cpp 用它认识的预置模板（只发一条 user）
     if (!m_chatTemplate.isEmpty()) {
-        QByteArray sysU = systemPrompt.toUtf8();
         QByteArray userU = userPrompt.toUtf8();
-        llama_chat_message msgs[2];
-        msgs[0].role = "system";
-        msgs[0].content = sysU.constData();
-        msgs[1].role = "user";
-        msgs[1].content = userU.constData();
+        llama_chat_message msgs[1];
+        msgs[0].role = "user";
+        msgs[0].content = userU.constData();
 
         QByteArray tmpl = m_chatTemplate;
-        std::vector<char> buf((size_t)(4 * (sysU.size() + userU.size()) + 1024), '\0');
-        int n = llama_chat_apply_template(tmpl.constData(), msgs, 2, true, buf.data(), (int)buf.size());
+        std::vector<char> buf((size_t)(4 * userU.size() + 1024), '\0');
+        int n = llama_chat_apply_template(tmpl.constData(), msgs, 1, true, buf.data(), (int)buf.size());
         if (n > 0 && (size_t)n <= buf.size()) {
             return QString::fromUtf8(buf.data(), n);
         }
@@ -177,9 +176,8 @@ QString Translator::buildChatPrompt(const QString &text, const QString &targetLa
     }
 
     // 3. ChatML 兜底（Qwen 系）
-    return QStringLiteral("<|im_start|>system\n%1<|im_end|>\n"
-                          "<|im_start|>user\n%2<|im_end|>\n"
-                          "<|im_start|>assistant\n").arg(systemPrompt, userPrompt);
+    return QStringLiteral("<|im_start|>user\n%1<|im_end|>\n"
+                          "<|im_start|>assistant\n").arg(userPrompt);
 }
 
 bool Translator::looksLikeLanguage(const QString &text, const QString &lang)
@@ -352,10 +350,16 @@ QString Translator::infer(const QString &prompt)
     int n_vocab = llama_vocab_n_tokens(vocab);
     // penalties(n_vocab, penalty_last_n, penalty_repeat, penalty_freq, penalty_present)
     // 旧值 1.4 过强，会把正确的字替换成近义字
+    // 采样参数按 Hy-MT2 官方推荐（1.8B/7B：temp 0.7 / top_p 0.6 / top_k 20 / penalty 1.05）。
+    // 环境变量可覆盖，便于 A/B 对比；dist 用固定种子保证同一输入可复现。
+    const float mtTemp = qEnvironmentVariableIsSet("MP_MT_TEMP")
+        ? qEnvironmentVariable("MP_MT_TEMP").toFloat() : 0.7f;
+    const float mtTopP = qEnvironmentVariableIsSet("MP_MT_TOP_P")
+        ? qEnvironmentVariable("MP_MT_TOP_P").toFloat() : 0.6f;
     llama_sampler_chain_add(smpl, llama_sampler_init_penalties(n_vocab, 64, 1.05f, 0.0f, 0.0f));
     llama_sampler_chain_add(smpl, llama_sampler_init_top_k(20));
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.9f, 1));
-    llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.2f));
+    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(mtTopP, 1));
+    llama_sampler_chain_add(smpl, llama_sampler_init_temp(mtTemp));
     llama_sampler_chain_add(smpl, llama_sampler_init_dist(1234));
 
     // 生成循环：单句字幕，遇到第一个换行就结束（模型续写的解释都在下一行）

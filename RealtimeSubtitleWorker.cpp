@@ -12,7 +12,7 @@
 namespace {
 constexpr int kSampleRate = 16000;
 constexpr int kFrameSamples = SileroVad::kWindowSamples;   // 512
-constexpr int kWindowsPerDetect = 6;                       // 每次推理 192ms
+constexpr int kWindowsPerDetect = 30;                      // 每次推理 960ms：VAD 每次调用有 40-100ms 固定开销，窗口越小越吃亏
 constexpr int kMinSegmentSamples = kSampleRate * 6 / 10;   // 短于 0.6s 不值得识别
 constexpr int kPollIntervalMs = 100;
 
@@ -111,6 +111,8 @@ void RealtimeSubtitleWorker::stop()
         m_timer->stop();
     // 停止时丢掉还没攒完的半句：不再为它等一次秒级识别
     m_pendingAudio.clear();
+    m_carryText.clear();
+    m_carryEnd = -1;
     m_lastSegmentEnd = -1;
     emit statusChanged(tr("实时字幕已停止"));
 }
@@ -159,6 +161,10 @@ void RealtimeSubtitleWorker::poll()
     if (!m_segmenter->inSpeech() && !m_pendingAudio.isEmpty() && m_lastSegmentEnd >= 0
         && pos - m_lastSegmentEnd >= gapSamples)
         flushUtterance();
+
+    // 攒着的半句等不到下一句（例如后面是音乐/静音）也要落地，否则永远不出字幕
+    if (!m_carryText.isEmpty() && m_carryEnd >= 0 && pos - m_carryEnd >= gapSamples)
+        flushCarry();
 }
 
 void RealtimeSubtitleWorker::drain()
@@ -166,10 +172,12 @@ void RealtimeSubtitleWorker::drain()
     const qint64 pos = m_position();
     const int step = kFrameSamples * kWindowsPerDetect;
 
-    while (pos - m_nextSample >= kFrameSamples) {
-        const int want = int(std::min<qint64>(step, pos - m_nextSample));
+    // 只在攒够一整块时才调 VAD：每次调用有 40-100ms 固定开销（graph 重建 + 调度），
+    // 按"当前到了多少就喂多少"会每 100ms 付一次，等于 1x 实时，永远追不上播放。
+    while (pos - m_nextSample >= step) {
+        const int want = step;
         QVector<float> chunk = takeSamples(m_nextSample, want);
-        if (chunk.size() < kFrameSamples)
+        if (chunk.size() < step)
             break;
 
         QVector<float> probs;
@@ -283,9 +291,11 @@ void RealtimeSubtitleWorker::flushUtterance()
     const bool longEnough = combined.size() >= 48 || (s1 - m_carryStart) >= qint64(kSampleRate) * 6;
     if (!terminated && !longEnough) {
         m_carryText = combined;
+        m_carryEnd = s1;
         return;
     }
     m_carryText.clear();
+    m_carryEnd = -1;
 
     const qint64 startSample = m_carryStart;
     if (!m_cfg.targetLang.isEmpty() && m_translator && m_translator->isModelLoaded()) {
@@ -302,4 +312,28 @@ void RealtimeSubtitleWorker::flushUtterance()
     emit subtitleReady(text, double(startSample) / kSampleRate, double(s1) / kSampleRate,
                        double(timer.elapsed()),
                        double(lagSamples) / kSampleRate);
+}
+
+// 把攒着的半句单独送出去：句尾没有标点，也不能让它一直挂着不出字幕。
+void RealtimeSubtitleWorker::flushCarry()
+{
+    if (m_carryText.isEmpty())
+        return;
+
+    const QString text = m_carryText;
+    const qint64 startSample = m_carryStart;
+    const qint64 endSample = m_carryEnd >= 0 ? m_carryEnd : m_carryStart;
+    m_carryText.clear();
+    m_carryEnd = -1;
+
+    QString out = text;
+    if (!m_cfg.targetLang.isEmpty() && m_translator && m_translator->isModelLoaded()) {
+        const QString translated = m_translator->translate(text, m_cfg.targetLang);
+        if (!translated.isEmpty())
+            out = translated;
+    }
+
+    const qint64 lagSamples = std::max<qint64>(0, m_position() - endSample);
+    emit subtitleReady(out, double(startSample) / kSampleRate, double(endSample) / kSampleRate,
+                       0.0, double(lagSamples) / kSampleRate);
 }
