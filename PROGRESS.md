@@ -105,3 +105,13 @@
 4. **M6 收尾**：修 `killTimer` 线程归属、VAD 与 ASR 解耦、补 `あくび` 那类准确率约束，然后打 `v0.6.0`。
 5. **M5 补测**：计划点名的 6 组单测（`avToSdlFormat`/音量缩放/seek 换算/时钟插值/WAV 头/播放列表）+ 2 小时长跑 + 内存基线。
 6. 拆文件仍登记为技术债 D-01，按需抽取（触发条件见 `docs/REFACTOR_PLAN.md`）。
+
+## 收尾检查点（2026-10-28）
+
+- 当前版本 `v0.5.9`，`HEAD = 3bf5e5d`，已推送；CI run #15 success；工作区干净。
+- 今天产出的包：`MediaPlayer-v0.5.9-win64.zip`（79.3MB）、`MediaPlayer-v0.5.9-win64-cuda.zip`（678.7MB）。
+- 正在用的 GPU 测试目录：`D:\new\test\MediaPlayer-gpu\`（exe 已是 v0.5.9，`MediaPlayer.ini` 指向 turbo + Q8 + silero）。
+- 源码快照：`D:\new\_backup\Player_src_v0.5.9_20261028.zip`；全量备份 `Player_20261025_1717` 未动。
+- 明天从"下一步"第 1 条开始：先看片收集问题，再决定 M6-c（延迟打点）与 M6 收尾的先后。
+- 回归素材：`D:\new\test\gc30.wav`（30s 日语片段，用于 `rt_cli` 对照）。
+
