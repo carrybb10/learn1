@@ -99,6 +99,29 @@
 8. **停止时线程归属警告**：`rt_cli` 与 GUI 退出偶现 `QObject::killTimer: Timers cannot be stopped from another thread` —— `requestStop()` 投递到 worker 线程的 `stop` 没有按预期执行，待查（不影响结果，但属于未定义行为）。
 9. **VAD 与 ASR 在同一线程串行**：`lag` 里有一部分是排队时间；把 VAD 拆到独立线程或做流水线是 M6 的优化项。
 
+## 待决策：UI 重构路线（2026-11-03 暂停点）
+
+今天完成了 UI 重构的第一步（v0.6.1：控制栏从浮动窗口改为窗口内布局行），并调研了
+Windows / Apple / mpv / IINA / VLC 4 / Telegram 的桌面 UI 做法。剩余工作分三条路线，
+**尚未选择**，下次开工先定这个再动代码：
+
+| 路线 | 内容 | 估算 | 落地后果 |
+|---|---|---|---|
+| A | Widgets 分层 + 动效 + 多级菜单 + Splash | ~142K tokens / 4–6 天 | 控制栏仍占一行，但观感接近成熟播放器 |
+| B | 先换 `QRhiWidget` 再重写 UI | +80–120K / 总计 2–3 周 | 控制栏可真正浮在画面上 |
+| C | 只做 P0（token）+ P3（悬停动效）+ P4（菜单） | ~73K | 界面结构不动，只拿动效与菜单 |
+
+已确认的架构约束（不要再重复验证）：
+- 视频是 `QWidget::createWindowContainer` 的原生子窗口，**任何 QWidget 兄弟都盖不住它**；
+  想叠加 UI 只能换 `QRhiWidget`（Qt 6.12 自带 D3D11 后端）。
+- 子控件不支持 `windowOpacity`，动效只能用 `pos/opacity` 或 `QGraphicsOpacityEffect`。
+
+关键参考（调研结论已存进对话，代码侧未改动）：
+- Windows 11 圆角：控件 4px、浮层 8px。
+- mpv `osc.lua` 的控制栏状态机（hidden/shown/timed，暂停常显，拖动禁用自动隐藏）。
+- IINA 1.5：主界面做减法、设置进侧栏 Inspector。
+- 多级菜单：设置面板二级页 + `Ctrl+K` 命令面板，最多三级。
+
 ## 下一步（按顺序，做完一条再动下一条）
 
 1. **M6-a 真实片源回归**：用 `-Gpu` 包整集看一遍，记录"哪几句还是看不懂"，区分识别错（人名/术语/漏词）与译文错（语序/语气）；同时验证上下文翻译（T6.4）是否真的改善了跨句指代。
