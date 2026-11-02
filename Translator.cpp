@@ -459,7 +459,8 @@ QString Translator::translate(const QString &text, const QString &targetLang)
 }
 
 QString Translator::translateWithContext(const QString &text, const QString &targetLang,
-                                         const QVector<TranslationContextTurn> &context)
+                                         const QVector<TranslationContextTurn> &context,
+                                         const QString &sourceLang)
 {
     QMutexLocker locker(&m_mutex);
     if (!m_llamaCtx) {
@@ -479,7 +480,9 @@ QString Translator::translateWithContext(const QString &text, const QString &tar
 
     // 原文已经是目标语言：直接透传。旧版会把它送去"翻译"，模型原样输出后
     // 又被 remove(原文) 清成空串，字幕直接消失。
-    if (looksLikeLanguage(filtered, targetLang)) {
+    const bool sourceKnownDifferent = !sourceLang.isEmpty() && sourceLang != QStringLiteral("auto")
+        && sourceLang != targetLang;
+    if (!sourceKnownDifferent && looksLikeLanguage(filtered, targetLang)) {
         fprintf(stderr, "[Translator] Skip translate, source already in [%s]: %s\n",
                 targetLang.toUtf8().constData(), filtered.toUtf8().constData());
         return filtered;

@@ -58,6 +58,8 @@ qt_add_executable(MediaPlayer
     VadSegmenter.cpp
     SileroVad.cpp
     RealtimeSubtitleWorker.cpp
+    BatchSubtitlePipeline.cpp
+    CueBuilder.cpp
     PlayerController.cpp
     VideoWidget.cpp
     D3D11Renderer.cpp
@@ -98,6 +100,25 @@ target_compile_definitions(MediaPlayer PRIVATE
 )
 
 # 8. 无 GUI 的翻译回归工具：改 prompt/采样参数后用同一批语料对比前后输出
+# 8.1 预翻译原型：视频/音频 -> 整篇 ASR -> 断句 -> 批量翻译 -> SRT
+add_executable(pretranslate_cli
+    tools/pretranslate_cli.cpp
+    BatchSubtitlePipeline.cpp
+    CueBuilder.cpp
+    SileroVad.cpp
+    VadSegmenter.cpp
+    WhisperTranscriber.cpp
+    Translator.cpp
+    AppPaths.cpp
+    Logger.cpp
+)
+target_include_directories(pretranslate_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(pretranslate_cli PRIVATE
+    avformat avcodec avutil swresample
+    whisper llama
+    Qt6::Core
+)
+
 add_executable(translate_cli
     tools/translate_cli.cpp
     Translator.cpp
@@ -178,11 +199,20 @@ add_custom_command(TARGET rt_cli POST_BUILD
     $<TARGET_FILE_DIR:rt_cli>
 )
 
+add_custom_command(TARGET pretranslate_cli POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${FFMPEG_DLLS}
+    ${WHISPER_DLLS}
+    ${LLAMA_DLLS}
+    $<TARGET_FILE_DIR:pretranslate_cli>
+)
+
 # 9. 纯函数单元测试：不加载模型、不开窗口、不碰 D3D11，秒级返回
 enable_testing()
 add_executable(unit_tests
     tests/unit_tests.cpp
     AudioRingBuffer.cpp
+    CueBuilder.cpp
     VadSegmenter.cpp
     Translator.cpp
     AppPaths.cpp

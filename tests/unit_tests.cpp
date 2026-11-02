@@ -12,6 +12,7 @@
 #include "AppPaths.h"
 #include "AudioRingBuffer.h"
 #include "Translator.h"
+#include "CueBuilder.h"
 #include "VadSegmenter.h"
 
 static int g_failed = 0;
@@ -245,6 +246,60 @@ static void testAudioRingBuffer()
     CHECK_NUM(big.copyFrom(0, out, 8), 0);
 }
 
+
+// ---- 断句与时间轴（cuebuild::buildCues）----
+
+static void testBuildCues()
+{
+    // 间隔小、总长不超标：两段合成一条
+    {
+        QVector<TranscriptSegment> segs;
+        segs.append({ 1.0, 1.5, QStringLiteral("第一句话，") });
+        segs.append({ 1.6, 2.2, QStringLiteral("第二句。") });
+        const QVector<cuebuild::Cue> cues = cuebuild::buildCues(segs, 28, 0.8, 8.0);
+        CHECK_NUM(cues.size(), 1);
+        if (!cues.isEmpty())
+            CHECK(cues.first().text.contains(QStringLiteral("第二句")));
+    }
+
+    // 间隔超过 0.5 秒：必须断开，不然会把两句不相关的话粘在一起
+    {
+        QVector<TranscriptSegment> segs;
+        segs.append({ 1.0, 2.0, QStringLiteral("前一句。") });
+        segs.append({ 3.0, 4.0, QStringLiteral("后一句。") });
+        const QVector<cuebuild::Cue> cues = cuebuild::buildCues(segs, 28, 0.8, 8.0);
+        CHECK_NUM(cues.size(), 2);
+    }
+
+    // 超长句按标点切，且每片不超过 maxChars
+    {
+        QVector<TranscriptSegment> segs;
+        segs.append({ 0.0, 6.0, QStringLiteral("这是第一句比较长的话，这是第二句也不短，这是第三句终于结束了。") });
+        const QVector<cuebuild::Cue> cues = cuebuild::buildCues(segs, 12, 0.8, 8.0);
+        CHECK(cues.size() >= 3);
+        for (const cuebuild::Cue &cue : cues)
+            CHECK(cue.text.size() <= 12);
+    }
+
+    // 时间轴要铺满整个语音段：最后一条的结束时间贴近段尾，而不是按语速提前结束
+    {
+        QVector<TranscriptSegment> segs;
+        segs.append({ 0.0, 5.0, QStringLiteral("嗯。") });
+        const QVector<cuebuild::Cue> cues = cuebuild::buildCues(segs, 28, 0.8, 8.0);
+        CHECK_NUM(cues.size(), 1);
+        if (!cues.isEmpty())
+            CHECK(cues.first().end >= 4.5);
+    }
+
+    // 空文本不能被吐成空字幕条
+    {
+        QVector<TranscriptSegment> segs;
+        segs.append({ 0.0, 1.0, QStringLiteral("   ") });
+        const QVector<cuebuild::Cue> cues = cuebuild::buildCues(segs, 28, 0.8, 8.0);
+        CHECK_NUM(cues.size(), 0);
+    }
+}
+
 static void testVadSegmenter()
 {
     // 参数缩小到方便手算：最短语音 3 帧、断句静音 2 帧、单段上限 6 帧
@@ -332,6 +387,7 @@ int main(int argc, char **argv)
     testAppPaths();
     testAudioRingBuffer();
     testVadSegmenter();
+    testBuildCues();
 
     std::printf("%d checks, %d failed\n", g_total, g_failed);
     return g_failed == 0 ? 0 : 1;
