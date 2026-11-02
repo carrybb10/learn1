@@ -730,16 +730,29 @@ int main(int argc, char *argv[])
     // 不做在 openFile 里的原因：24 分钟片源要 1 分半左右，同步做会卡死 UI。
     // 没模型或失败时静默跳过，播放不受影响（实时字幕仍然可用）。
     bool pretranslateBusy = false;
+    QString pendingPretranslate;  // 模型还没加载完就点开视频：先记下，加载完成再补做
     auto startPretranslate = [&](const QString &filePath) {
         if (filePath.isEmpty() || pretranslateBusy || whisperModelPath.isEmpty())
             return;
+        // 引擎还没加载完就开始跑，whisper 只会回一句 "no speech recognized"
+        if (!whisper->isModelLoaded() || (!translatorModelPath.isEmpty() && !translator->isModelLoaded())) {
+            pendingPretranslate = filePath;
+            return;
+        }
         BatchSubtitlePipeline::Options options;
         options.inputPath = filePath;
         options.asrModel = whisperModelPath;
+        // 复用播放器已经加载的引擎：再建一份就等于把同一批模型在显存里放两次
+        options.asrEngine = whisper;
+        options.mtEngine = translator;
         options.vadModel = AppPaths::resolveResource(QStringLiteral("ai/vadModel"), AppPaths::vadModelCandidates());
         options.asrLanguage = QStringLiteral("auto");
-        const QString targetLang = translateLangCombo->currentData().toString();
-        if (!translatorModelPath.isEmpty() && !targetLang.isEmpty() && targetLang != QStringLiteral("original")) {
+        QString targetLang = translateLangCombo->currentData().toString();
+        if (targetLang == QStringLiteral("original") || targetLang.isEmpty()) {
+            // 默认翻中文：外语片只出原文字幕等于没做。想强制不翻译，把 MT 模型路径清掉即可
+            targetLang = QStringLiteral("中文");
+        }
+        if (!translatorModelPath.isEmpty()) {
             options.mtModel = translatorModelPath;
             options.targetLang = targetLang;
         }
@@ -759,7 +772,8 @@ int main(int argc, char *argv[])
                     }
                     QMetaObject::invokeMethod(&window, [&, text]() { showNotification(text); }, Qt::QueuedConnection);
                 });
-            QMetaObject::invokeMethod(&window, [&, result]() {
+            const QString targetLang = options.targetLang;
+            QMetaObject::invokeMethod(&window, [&, result, targetLang]() {
                 pretranslateBusy = false;
                 if (!result.ok) {
                     LOG_WARN(LogModule::AI_ASR, "pretranslate failed: %s", result.error.toUtf8().constData());
@@ -767,8 +781,14 @@ int main(int argc, char *argv[])
                     return;
                 }
                 if (player->loadSubtitle(result.srtPath)) {
-                    showNotification(result.fromCache ? QStringLiteral("已加载离线字幕")
-                                                      : QStringLiteral("字幕已生成（%1 条）").arg(result.cueCount));
+                    if (result.fromCache) {
+                        showNotification(QStringLiteral("已加载离线字幕"));
+                    } else if (targetLang.isEmpty()) {
+                        // 目标语言是"原文"时只做识别：外语片看到的是原文字幕，必须说清楚
+                        showNotification(QStringLiteral("字幕已生成（%1 条，原文未翻译）").arg(result.cueCount));
+                    } else {
+                        showNotification(QStringLiteral("字幕已生成（%1 条，%2）").arg(result.cueCount).arg(targetLang));
+                    }
                 }
                 LOG_INFO(LogModule::AI_ASR, "pretranslate ok: %s (%d cues)", result.srtPath.toUtf8().constData(),
                          result.cueCount);
@@ -781,6 +801,21 @@ int main(int argc, char *argv[])
         if (index >= 0 && index < player->playlist().size())
             startPretranslate(player->playlist().at(index));
     });
+    auto runPendingPretranslate = [&]() {
+        if (pendingPretranslate.isEmpty() || !whisper->isModelLoaded())
+            return;
+        if (!translatorModelPath.isEmpty() && !translator->isModelLoaded())
+            return;
+        const QString filePath = pendingPretranslate;
+        pendingPretranslate.clear();
+        startPretranslate(filePath);
+    };
+    QObject::connect(whisper, &WhisperTranscriber::modelLoaded, &window,
+                     [&](bool, const QString &) { runPendingPretranslate(); }, Qt::QueuedConnection);
+    if (translator != nullptr) {
+        QObject::connect(translator, &Translator::modelLoaded, &window,
+                         [&](bool, const QString &) { runPendingPretranslate(); }, Qt::QueuedConnection);
+    }
 
     // 命令行带文件时直接开播（也给自动化冒烟用；等价于把文件拖进窗口）
     const QStringList cliArgs = QCoreApplication::arguments();

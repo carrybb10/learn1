@@ -480,7 +480,8 @@ QString Translator::translateWithContext(const QString &text, const QString &tar
 
     // 原文已经是目标语言：直接透传。旧版会把它送去"翻译"，模型原样输出后
     // 又被 remove(原文) 清成空串，字幕直接消失。
-    const bool sourceKnownDifferent = !sourceLang.isEmpty() && sourceLang != targetLang;
+    const bool sourceKnownDifferent = !sourceLang.isEmpty() && sourceLang != QStringLiteral("auto")
+        && sourceLang != targetLang;
     if (!sourceKnownDifferent && looksLikeLanguage(filtered, targetLang)) {
         fprintf(stderr, "[Translator] Skip translate, source already in [%s]: %s\n",
                 targetLang.toUtf8().constData(), filtered.toUtf8().constData());

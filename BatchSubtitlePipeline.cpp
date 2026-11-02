@@ -1,6 +1,8 @@
 #include "BatchSubtitlePipeline.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDir>
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
@@ -268,7 +270,8 @@ bool writeSrt(const QString &path, const QVector<Cue> &cues, bool translated, QS
 {
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        *error = QStringLiteral("cannot write %1").arg(path);
+        // 带上系统原因：只写路径的话，"目录只读"和"文件被占用"看起来一模一样
+        *error = QStringLiteral("cannot write %1: %2").arg(path, file.errorString());
         return false;
     }
     QTextStream out(&file);
@@ -355,10 +358,15 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
     const double audioSeconds = static_cast<double>(samples.size()) / kSampleRate;
     result.decodeMs = timer.restart();
 
-    WhisperTranscriber asr;
-    if (!asr.loadModel(options.asrModel)) {
-        result.error = QStringLiteral("cannot load ASR model: %1").arg(options.asrModel);
-        return result;
+    std::unique_ptr<WhisperTranscriber> ownedAsr;
+    WhisperTranscriber *asr = options.asrEngine;
+    if (asr == nullptr) {
+        ownedAsr = std::make_unique<WhisperTranscriber>();
+        if (!ownedAsr->loadModel(options.asrModel)) {
+            result.error = QStringLiteral("cannot load ASR model: %1").arg(options.asrModel);
+            return result;
+        }
+        asr = ownedAsr.get();
     }
 
     if (progress)
@@ -422,7 +430,7 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
         if (to - from < kSampleRate / 4)  // 短于 250ms 没有识别价值
             continue;
         const QVector<float> chunk = samples.mid(from, to - from);
-        const QVector<TranscriptSegment> segments = asr.transcribe(chunk, options.asrLanguage);
+        const QVector<TranscriptSegment> segments = asr->transcribe(chunk, options.asrLanguage);
         for (TranscriptSegment segment : segments) {
             segment.start += chunks[i].first;
             segment.end += chunks[i].first;
@@ -439,8 +447,13 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
     }
 
     if (!options.targetLang.isEmpty()) {
-        Translator translator;
-        if (!translator.loadModel(options.mtModel)) {
+        std::unique_ptr<Translator> ownedTranslator;
+    Translator *translator = options.mtEngine;
+    if (translator == nullptr) {
+        ownedTranslator = std::make_unique<Translator>();
+        translator = ownedTranslator.get();
+    }
+        if (!translator->loadModel(options.mtModel)) {
             result.error = QStringLiteral("cannot load translation model: %1").arg(options.mtModel);
             return result;
         }
@@ -448,7 +461,7 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
         for (int i = 0; i < cues.size(); ++i) {
             if (progress)
                 progress(QStringLiteral("translate"), i, cues.size());
-            cues[i].translated = translator.translateWithContext(cues[i].text, options.targetLang, context,
+            cues[i].translated = translator->translateWithContext(cues[i].text, options.targetLang, context,
                                                                  options.asrLanguage);
             cues[i].translated.replace(QStringLiteral("，。"), QStringLiteral("。"));
             cues[i].translated.replace(QStringLiteral("，，"), QStringLiteral("，"));
@@ -465,8 +478,23 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
         progress(QStringLiteral("write"), 0, 0);
 
     const bool translated = !options.targetLang.isEmpty();
-    if (!writeSrt(srtPath, cues, translated, &result.error))
-        return result;
+    QString writePath = srtPath;
+    QString writeError;
+    if (!writeSrt(writePath, cues, translated, &writeError)) {
+        // 片源目录可能只读（网盘同步、系统盘保护）。退到程序目录，别让整条链白跑。
+        const QString fallbackDir = QCoreApplication::applicationDirPath() + QStringLiteral("/subtitles");
+        QDir().mkpath(fallbackDir);
+        writePath = fallbackDir + QLatin1Char('/') + QFileInfo(srtPath).fileName();
+        if (!writeSrt(writePath, cues, translated, &result.error)) {
+            result.error = writeError + QStringLiteral("; fallback also failed: ") + result.error;
+            return result;
+        }
+        result.srtPath = writePath;
+        fprintf(stderr, "[srt] primary path failed (%s), wrote to %s\n", writeError.toUtf8().constData(),
+                writePath.toUtf8().constData());
+    } else {
+        result.srtPath = writePath;
+    }
 
     // 只有整篇成功才写缓存键，避免半成品被当成命中。
     QFile keyFile(keyPath);

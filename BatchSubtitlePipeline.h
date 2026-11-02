@@ -25,6 +25,11 @@ public:
 
     struct Options
     {
+        // 复用调用方已经加载好的引擎。同时存在两份 GPU 模型会把 8GB 显存挤爆，
+        // GUI 里必须传这两项；单独跑 CLI 时为 nullptr，由 pipeline 自己加载。
+        class WhisperTranscriber *asrEngine = nullptr;
+        class Translator *mtEngine = nullptr;
+
         QString inputPath;
         QString srtPath;                      // 空则用 defaultSrtPath() 派生
         QString asrModel;
