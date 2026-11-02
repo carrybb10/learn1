@@ -747,6 +747,8 @@ int main(int argc, char *argv[])
         options.mtEngine = translator;
         options.vadModel = AppPaths::resolveResource(QStringLiteral("ai/vadModel"), AppPaths::vadModelCandidates());
         options.asrLanguage = QStringLiteral("auto");
+        // 字幕整体早晚由用户校准：ai/subtitleOffsetMs（负数=字幕提前）
+        options.subtitleOffsetMs = QSettings().value(QStringLiteral("ai/subtitleOffsetMs"), 0).toInt();
         QString targetLang = translateLangCombo->currentData().toString();
         if (targetLang == QStringLiteral("original") || targetLang.isEmpty()) {
             // 默认翻中文：外语片只出原文字幕等于没做。想强制不翻译，把 MT 模型路径清掉即可
@@ -770,7 +772,11 @@ int main(int argc, char *argv[])
                         else if (stage == QStringLiteral("translate"))
                             text = QStringLiteral("正在翻译 %1%").arg(percent);
                     }
-                    QMetaObject::invokeMethod(&window, [&, text]() { showNotification(text); }, Qt::QueuedConnection);
+                    QMetaObject::invokeMethod(&window, [&, text]() {
+                        showNotification(text);
+                        // 进度同时写到标题栏：通知是浮动小窗，全屏播放时看不见
+                        window.setWindowTitle(text);
+                    }, Qt::QueuedConnection);
                 });
             const QString targetLang = options.targetLang;
             QMetaObject::invokeMethod(&window, [&, result, targetLang]() {
@@ -780,7 +786,10 @@ int main(int argc, char *argv[])
                     showNotification(QStringLiteral("字幕生成失败，已回退实时模式"));
                     return;
                 }
+                window.setWindowTitle(QStringLiteral("MediaPlayer"));
                 if (player->loadSubtitle(result.srtPath)) {
+                    subtitleToggle->setChecked(true);  // 生成了字幕就直接显示，不用再点一次开关
+                    player->refreshSubtitle();
                     if (result.fromCache) {
                         showNotification(QStringLiteral("已加载离线字幕"));
                     } else if (targetLang.isEmpty()) {

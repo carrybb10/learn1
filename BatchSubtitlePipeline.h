@@ -40,6 +40,7 @@ public:
         int maxChars = 28;
         double cps = 8.0;                     // 每秒字数，用来估算每条字幕时长
         bool useCache = true;
+        int subtitleOffsetMs = 0;              // 整体平移字幕时间，用来对上人耳听到的位置
     };
 
     struct Result

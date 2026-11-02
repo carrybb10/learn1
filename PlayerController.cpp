@@ -1171,6 +1171,14 @@ void PlayerController::clearSubtitle()
     }
 }
 
+void PlayerController::refreshSubtitle()
+{
+    if (!m_subtitleParser.isLoaded())
+        return;
+    // 清空缓存文本，下一个显示 tick 会按 playTime 取到正确的 cue 并发 subtitleChanged
+    m_currentSubtitleText.clear();
+}
+
 bool PlayerController::hasSubtitle() const
 {
     return m_subtitleParser.isLoaded();

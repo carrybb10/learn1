@@ -68,6 +68,9 @@ public:
     bool loadSubtitle(const QString &filePath);  // 加载外部字幕文件（SRT/ASS）
     void clearSubtitle();
     bool hasSubtitle() const;
+
+    // 加载/切换字幕后立刻按当前播放位置重算一次，避免要等到下一次内容变化才刷出来
+    void refreshSubtitle();
     void setAISubtitles(const QList<SubtitleCue> &cues);  // 设置AI识别结果为字幕
     QList<SubtitleCue> aiSubtitles() const;  // 获取当前AI字幕（含翻译）
 

@@ -228,9 +228,12 @@ QVector<Cue> buildCues(const QVector<TranscriptSegment> &segments, int maxChars,
         const double segmentEnd = qMax(0.0, segment.end);
         const double maxCueDuration = 8.0;
         double cursor = segment.start;
+        const double span = qMax(minDuration, segmentEnd - segment.start);
         for (const QString &piece : pieces) {
+            // 按字数占比分配整段时间：只按语速估算会让字幕比人声早消失，看着就是"不同步"
+            const double byChars = span * static_cast<double>(piece.trimmed().size()) / totalChars;
             const double estimated = (static_cast<double>(piece.trimmed().size()) / charsPerSecond);
-            const double duration = qBound(minDuration, estimated, maxCueDuration);
+            const double duration = qBound(minDuration, qMax(byChars, estimated * 0.5), maxCueDuration);
             Cue cue;
             cue.start = cursor;
             cue.end = qMin(cursor + duration, segmentEnd);
@@ -316,7 +319,8 @@ QString BatchSubtitlePipeline::cacheKey(const Options &options)
     return QStringList({ QString::number(input.size()), QString::number(input.lastModified().toSecsSinceEpoch()),
                          QFileInfo(options.asrModel).fileName(), QFileInfo(options.vadModel).fileName(),
                          QFileInfo(options.mtModel).fileName(), options.asrLanguage, options.targetLang,
-                         QString::number(options.maxChars), QString::number(options.cps, 'f', 1),
+                         QString::number(options.maxChars),
+        QString::number(options.subtitleOffsetMs), QString::number(options.cps, 'f', 1),
                          QString::number(kPipelineVersion) })
         .join(QLatin1Char('|'));
 }
@@ -440,6 +444,14 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
     result.asrMs = timer.restart();
 
     QVector<Cue> cues = buildCues(asrSegments, options.maxChars, 0.8, options.cps);
+    if (options.subtitleOffsetMs != 0) {
+        // whisper 的时间戳通常比人耳听到的晚一点；这个偏移让人自己校准，不必改代码重编
+        const double shift = options.subtitleOffsetMs / 1000.0;
+        for (Cue &cue : cues) {
+            cue.start = qMax(0.0, cue.start + shift);
+            cue.end = qMax(cue.start + 0.2, cue.end + shift);
+        }
+    }
     result.cueCount = cues.size();
     if (cues.isEmpty()) {
         result.error = QStringLiteral("no speech recognized");
