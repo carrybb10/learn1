@@ -59,6 +59,7 @@ qt_add_executable(MediaPlayer
     SileroVad.cpp
     RealtimeSubtitleWorker.cpp
     BatchSubtitlePipeline.cpp
+    CueBuilder.cpp
     PlayerController.cpp
     VideoWidget.cpp
     D3D11Renderer.cpp
@@ -103,6 +104,7 @@ target_compile_definitions(MediaPlayer PRIVATE
 add_executable(pretranslate_cli
     tools/pretranslate_cli.cpp
     BatchSubtitlePipeline.cpp
+    CueBuilder.cpp
     SileroVad.cpp
     VadSegmenter.cpp
     WhisperTranscriber.cpp
@@ -210,6 +212,7 @@ enable_testing()
 add_executable(unit_tests
     tests/unit_tests.cpp
     AudioRingBuffer.cpp
+    CueBuilder.cpp
     VadSegmenter.cpp
     Translator.cpp
     AppPaths.cpp

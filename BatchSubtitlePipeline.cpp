@@ -24,6 +24,8 @@ extern "C" {
 #include <libswresample/swresample.h>
 }
 
+#include "CueBuilder.h"
+#include "Logger.h"
 #include "SileroVad.h"
 #include "Translator.h"
 #include "VadSegmenter.h"
@@ -59,9 +61,8 @@ bool decodeAudio(const QString &path, QVector<float> *out, QString *error)
     }
 
     AVStream *stream = fmt->streams[streamIndex];
-    fprintf(stderr, "[decode] stream %d: codec_id=%d sample_rate=%d\n", streamIndex,
-            (int)stream->codecpar->codec_id, stream->codecpar->sample_rate);
-    fflush(stderr);
+    LOG_INFO(LogModule::AI_ASR, "[decode] stream %d codec=%d rate=%d", streamIndex,
+             (int)stream->codecpar->codec_id, stream->codecpar->sample_rate);
     const AVCodec *codec = avcodec_find_decoder(stream->codecpar->codec_id);
     if (!codec) {
         *error = QStringLiteral("unsupported audio codec");
@@ -93,7 +94,7 @@ bool decodeAudio(const QString &path, QVector<float> *out, QString *error)
         return false;
     }
 
-    fprintf(stderr, "[decode] decoder opened, sample_fmt=%d\n", (int)ctx->sample_fmt);
+    LOG_INFO(LogModule::AI_ASR, "[decode] decoder opened, sample_fmt=%d", (int)ctx->sample_fmt);
     fflush(stderr);
     AVPacket *packet = av_packet_alloc();
     AVFrame *frame = av_frame_alloc();
@@ -125,12 +126,12 @@ bool decodeAudio(const QString &path, QVector<float> *out, QString *error)
         }
         av_packet_unref(packet);
     }
-    fprintf(stderr, "[decode] read %d packets, decoded %d samples\n", packets, (int)out->size());
+    LOG_INFO(LogModule::AI_ASR, "[decode] %d packets, %d samples", packets, (int)out->size());
     fflush(stderr);
     avcodec_send_packet(ctx, nullptr);
     while (avcodec_receive_frame(ctx, frame) == 0)
         drain(frame);
-    fprintf(stderr, "[decode] flush done, %d samples\n", (int)out->size());
+    LOG_INFO(LogModule::AI_ASR, "[decode] flush done, %d samples", (int)out->size());
     fflush(stderr);
 
     // 冲掉重采样器里残留的尾巴，否则最后几十毫秒会丢
@@ -158,99 +159,6 @@ bool decodeAudio(const QString &path, QVector<float> *out, QString *error)
 // 2. 一句超过 maxChars 就在逗号/顿号处再切；
 // 3. 还是超长就硬切；
 // 4. 时间按字数比例分配，过短的条目并到前一条（避免 0.2 秒闪一下）。
-QVector<Cue> buildCues(const QVector<TranscriptSegment> &segments, int maxChars, double minDuration, double charsPerSecond)
-{
-    static const QRegularExpression sentenceEnd(QStringLiteral("[。！？!?…]+"));
-    static const QRegularExpression clauseEnd(QStringLiteral("[，、；：,;:]+"));
-    QVector<Cue> cues;
-
-    auto splitKeepDelimiter = [](const QString &text, const QRegularExpression &re) {
-        QStringList parts;
-        int start = 0;
-        auto it = re.globalMatch(text);
-        while (it.hasNext()) {
-            const auto m = it.next();
-            const int end = m.capturedEnd();
-            parts.append(text.mid(start, end - start));
-            start = end;
-        }
-        if (start < text.size())
-            parts.append(text.mid(start));
-        return parts;
-    };
-
-    // whisper 输出的是"呼吸段"，不是句子：间隔小且不超长的相邻段先拼起来
-    QVector<TranscriptSegment> merged;
-    for (const TranscriptSegment &segment : segments) {
-        const QString text = segment.text.trimmed();
-        if (text.isEmpty())
-            continue;
-        if (!merged.isEmpty() && segment.start - merged.last().end <= 0.5
-            && merged.last().text.size() + text.size() <= maxChars) {
-            merged.last().text += text;
-            merged.last().end = segment.end;
-            continue;
-        }
-        merged.append({ segment.start, segment.end, text });
-    }
-
-    for (const TranscriptSegment &segment : merged) {
-        QString text = segment.text.trimmed();
-        if (text.isEmpty())
-            continue;
-
-        // 步骤 1+2+3：切成不超过 maxChars 的片段
-        QStringList pieces;
-        const QStringList sentences = splitKeepDelimiter(text, sentenceEnd);
-        for (const QString &sentence : sentences) {
-            if (sentence.size() <= maxChars) {
-                pieces.append(sentence);
-                continue;
-            }
-            for (const QString &clause : splitKeepDelimiter(sentence, clauseEnd)) {
-                if (clause.size() <= maxChars) {
-                    pieces.append(clause);
-                    continue;
-                }
-                for (int i = 0; i < clause.size(); i += maxChars)
-                    pieces.append(clause.mid(i, maxChars));
-            }
-        }
-
-        // 步骤 4：按字数比例分配时间
-        int totalChars = 0;
-        for (const QString &piece : pieces)
-            totalChars += piece.size();
-        if (totalChars == 0)
-            continue;
-
-        // 每条时长由字数按语速估算，段首对齐；累计不超过段尾，剩余时间自然成为句间间隙。
-        const double segmentEnd = qMax(0.0, segment.end);
-        const double maxCueDuration = 8.0;
-        double cursor = segment.start;
-        const double span = qMax(minDuration, segmentEnd - segment.start);
-        for (const QString &piece : pieces) {
-            // 按字数占比分配整段时间：只按语速估算会让字幕比人声早消失，看着就是"不同步"
-            const double byChars = span * static_cast<double>(piece.trimmed().size()) / totalChars;
-            const double estimated = (static_cast<double>(piece.trimmed().size()) / charsPerSecond);
-            const double duration = qBound(minDuration, qMax(byChars, estimated * 0.5), maxCueDuration);
-            Cue cue;
-            cue.start = cursor;
-            cue.end = qMin(cursor + duration, segmentEnd);
-            cue.text = piece.trimmed();
-            cursor = cue.end;
-            if (cue.text.isEmpty())
-                continue;
-            if (!cues.isEmpty() && cue.end - cue.start < minDuration && cues.last().end >= cue.start - 1e-3) {
-                cues.last().text += cue.text;
-                cues.last().end = cue.end;
-                continue;
-            }
-            cues.append(cue);
-        }
-    }
-    return cues;
-}
 
 QString formatSrtTime(double seconds)
 {
@@ -347,7 +255,7 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
                 result.ok = true;
                 result.fromCache = true;
                 result.totalMs = total.elapsed();
-                fprintf(stderr, "[cache] hit: %s\n", srtPath.toUtf8().constData());
+                LOG_INFO(LogModule::AI_ASR, "[cache] hit: %s", srtPath.toUtf8().constData());
                 return result;
             }
         }
@@ -408,7 +316,7 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
                 windows.last().second = end;
         }
         if (windows.isEmpty())
-            fprintf(stderr, "[vad] no speech detected, falling back to fixed windows\n");
+            LOG_WARN(LogModule::AI_ASR, "[vad] no speech, falling back to fixed windows");
     }
     if (windows.isEmpty()) {
         for (double start = 0; start < audioSeconds; start += 25.0)
@@ -443,7 +351,16 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
     }
     result.asrMs = timer.restart();
 
-    QVector<Cue> cues = buildCues(asrSegments, options.maxChars, 0.8, options.cps);
+    const QVector<cuebuild::Cue> rawCues = cuebuild::buildCues(asrSegments, options.maxChars, 0.8, options.cps);
+    QVector<Cue> cues;
+    cues.reserve(rawCues.size());
+    for (const cuebuild::Cue &raw : rawCues) {
+        Cue cue;
+        cue.start = raw.start;
+        cue.end = raw.end;
+        cue.text = raw.text;
+        cues.append(cue);
+    }
     if (options.subtitleOffsetMs != 0) {
         // whisper 的时间戳通常比人耳听到的晚一点；这个偏移让人自己校准，不必改代码重编
         const double shift = options.subtitleOffsetMs / 1000.0;
@@ -502,7 +419,7 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
             return result;
         }
         result.srtPath = writePath;
-        fprintf(stderr, "[srt] primary path failed (%s), wrote to %s\n", writeError.toUtf8().constData(),
+        LOG_WARN(LogModule::AI_ASR, "[srt] primary failed (%s), fell back to %s", writeError.toUtf8().constData(),
                 writePath.toUtf8().constData());
     } else {
         result.srtPath = writePath;
@@ -517,8 +434,8 @@ BatchSubtitlePipeline::Result BatchSubtitlePipeline::runSync(const Options &opti
 
     result.ok = true;
     result.totalMs = total.elapsed();
-    fprintf(stderr, "[pipeline] %d cues, total %lld ms (decode %lld + vad %lld + asr %lld + mt %lld)\n",
-            result.cueCount, (long long)result.totalMs, (long long)result.decodeMs, (long long)result.vadMs,
-            (long long)result.asrMs, (long long)result.mtMs);
+    LOG_INFO(LogModule::AI_ASR, "[pipeline] %d cues, total %lld ms (decode %lld + vad %lld + asr %lld + mt %lld)",
+             result.cueCount, (long long)result.totalMs, (long long)result.decodeMs, (long long)result.vadMs,
+             (long long)result.asrMs, (long long)result.mtMs);
     return result;
 }
