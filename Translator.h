@@ -43,8 +43,11 @@ public:
 
     // 带上下文的同步翻译：context 是紧邻的前 1-2 句（原文 + 译文），
     // 只用来消歧（代词、省略、专有名词），不会被翻译或复述。
+    // sourceLang 已知（如片源是日语）时，不要再按"字符集看起来像目标语言"就透传：
+    // 日语里纯汉字短语会被误判成中文，导致字幕原样输出日文。
     QString translateWithContext(const QString &text, const QString &targetLang,
-                                 const QVector<TranslationContextTurn> &context);
+                                 const QVector<TranslationContextTurn> &context,
+                                 const QString &sourceLang = QString());
 
     // 批量同步翻译（返回与输入等长的结果列表）
     QVector<TranslationResult> translateBatch(const QVector<QString> &texts, const QString &targetLang = "中文");
