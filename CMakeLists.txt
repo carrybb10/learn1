@@ -58,6 +58,7 @@ qt_add_executable(MediaPlayer
     VadSegmenter.cpp
     SileroVad.cpp
     RealtimeSubtitleWorker.cpp
+    BatchSubtitlePipeline.cpp
     PlayerController.cpp
     VideoWidget.cpp
     D3D11Renderer.cpp
@@ -101,6 +102,7 @@ target_compile_definitions(MediaPlayer PRIVATE
 # 8.1 预翻译原型：视频/音频 -> 整篇 ASR -> 断句 -> 批量翻译 -> SRT
 add_executable(pretranslate_cli
     tools/pretranslate_cli.cpp
+    BatchSubtitlePipeline.cpp
     SileroVad.cpp
     VadSegmenter.cpp
     WhisperTranscriber.cpp

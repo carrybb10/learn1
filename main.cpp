@@ -1,6 +1,7 @@
 #include <QApplication>
 #include "Version.h"
 #include "AppPaths.h"
+#include "BatchSubtitlePipeline.h"
 #include "RealtimeSubtitleWorker.h"
 #include <QMainWindow>
 #include <QWidget>
@@ -724,6 +725,70 @@ int main(int argc, char *argv[])
         QObject::connect(fadeOut, &QPropertyAnimation::finished, notify, &QLabel::deleteLater);
         fadeIn->start();
     };
+
+    // ===== 离线预翻译：本地文件打开后在后台把整篇字幕做好 =====
+    // 不做在 openFile 里的原因：24 分钟片源要 1 分半左右，同步做会卡死 UI。
+    // 没模型或失败时静默跳过，播放不受影响（实时字幕仍然可用）。
+    bool pretranslateBusy = false;
+    auto startPretranslate = [&](const QString &filePath) {
+        if (filePath.isEmpty() || pretranslateBusy || whisperModelPath.isEmpty())
+            return;
+        BatchSubtitlePipeline::Options options;
+        options.inputPath = filePath;
+        options.asrModel = whisperModelPath;
+        options.vadModel = AppPaths::resolveResource(QStringLiteral("ai/vadModel"), AppPaths::vadModelCandidates());
+        options.asrLanguage = QStringLiteral("auto");
+        const QString targetLang = translateLangCombo->currentData().toString();
+        if (!translatorModelPath.isEmpty() && !targetLang.isEmpty() && targetLang != QStringLiteral("original")) {
+            options.mtModel = translatorModelPath;
+            options.targetLang = targetLang;
+        }
+
+        pretranslateBusy = true;
+        QThread *thread = QThread::create([&, options]() {
+            BatchSubtitlePipeline pipeline;
+            const BatchSubtitlePipeline::Result result =
+                pipeline.runSync(options, [&](const QString &stage, int done, int total) {
+                    QString text = QStringLiteral("正在准备字幕");
+                    if (total > 0) {
+                        const int percent = (done + 1) * 100 / total;
+                        if (stage == QStringLiteral("asr"))
+                            text = QStringLiteral("正在识别 %1%").arg(percent);
+                        else if (stage == QStringLiteral("translate"))
+                            text = QStringLiteral("正在翻译 %1%").arg(percent);
+                    }
+                    QMetaObject::invokeMethod(&window, [&, text]() { showNotification(text); }, Qt::QueuedConnection);
+                });
+            QMetaObject::invokeMethod(&window, [&, result]() {
+                pretranslateBusy = false;
+                if (!result.ok) {
+                    LOG_WARN(LogModule::AI_ASR, "pretranslate failed: %s", result.error.toUtf8().constData());
+                    showNotification(QStringLiteral("字幕生成失败，已回退实时模式"));
+                    return;
+                }
+                if (player->loadSubtitle(result.srtPath)) {
+                    showNotification(result.fromCache ? QStringLiteral("已加载离线字幕")
+                                                      : QStringLiteral("字幕已生成（%1 条）").arg(result.cueCount));
+                }
+                LOG_INFO(LogModule::AI_ASR, "pretranslate ok: %s (%d cues)", result.srtPath.toUtf8().constData(),
+                         result.cueCount);
+            }, Qt::QueuedConnection);
+        });
+        QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+        thread->start();
+    };
+    QObject::connect(player, &PlayerController::currentIndexChanged, [&](int index) {
+        if (index >= 0 && index < player->playlist().size())
+            startPretranslate(player->playlist().at(index));
+    });
+
+    // 命令行带文件时直接开播（也给自动化冒烟用；等价于把文件拖进窗口）
+    const QStringList cliArgs = QCoreApplication::arguments();
+    if (cliArgs.size() > 1 && QFileInfo::exists(cliArgs.at(1))) {
+        player->addToPlaylist(cliArgs.at(1));
+        player->playIndex(player->playlist().indexOf(cliArgs.at(1)));
+        playBtn->setText(QStringLiteral("暂停"));
+    }
 
     // 翻译完成后更新字幕（T4.8）
     QObject::connect(translator, &Translator::batchTranslateFinished, &window, [&](const QVector<TranslationResult> &results) {
