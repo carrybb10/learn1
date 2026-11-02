@@ -111,12 +111,12 @@ int main(int argc, char *argv[])
 
     const int CONTROL_HEIGHT = 50;
     const int SETTINGS_HEIGHT = 36;
-    const int UI_TOTAL_HEIGHT = CONTROL_HEIGHT + SETTINGS_HEIGHT;
 
-    // ===== 独立UI窗口：包含设置栏+控制栏，悬浮在主窗口上方 =====
-    QWidget *uiWindow = new QWidget(&window,
-        Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus);
-    uiWindow->setStyleSheet("background-color: rgba(30,30,30,240);");
+    // ===== 底部 UI 面板：设置栏 + 播放列表 + 控制栏，作为布局里的一行 =====
+    // 视频是 QWidget::createWindowContainer 包出来的原生子窗口，原生窗口总是盖在普通
+    // QWidget 兄弟之上，所以控制栏不能叠在视频上，只能排在视频下方。
+    QWidget *uiWindow = new QWidget(central);
+    uiWindow->setStyleSheet("background-color: rgb(30,30,30);");
     QVBoxLayout *uiLayout = new QVBoxLayout(uiWindow);
     uiLayout->setContentsMargins(0, 0, 0, 0);
     uiLayout->setSpacing(0);
@@ -264,9 +264,10 @@ int main(int argc, char *argv[])
         if (!subtitleLabel->isVisible() || subtitleLabel->dragging) return;
         int w = subtitleLabel->width();
         int h = subtitleLabel->height();
+        const int panelH = uiWindow->isVisible() ? uiWindow->height() : 0;
         QPoint defaultPos = window.mapToGlobal(QPoint(
             (window.width() - w) / 2,
-            window.height() - UI_TOTAL_HEIGHT - h - 10));
+            central->height() - panelH - h - 10));
         subtitleLabel->move(defaultPos + subtitleLabel->offset);
     };
 
@@ -274,9 +275,10 @@ int main(int argc, char *argv[])
     subtitleLabel->onDragEnd = [&]() {
         int w = subtitleLabel->width();
         int h = subtitleLabel->height();
+        const int panelH = uiWindow->isVisible() ? uiWindow->height() : 0;
         QPoint defaultPos = window.mapToGlobal(QPoint(
             (window.width() - w) / 2,
-            window.height() - UI_TOTAL_HEIGHT - h - 10));
+            central->height() - panelH - h - 10));
         subtitleLabel->offset = subtitleLabel->pos() - defaultPos;
     };
 
@@ -360,14 +362,10 @@ int main(int argc, char *argv[])
     uiLayout->addWidget(settingsBar);
     uiLayout->addWidget(playlistPanel);
     uiLayout->addWidget(controlBar);
-    // 字幕标签不加入布局，悬浮在控制栏上方（避免被固定高度的UI窗口遮挡）
+    mainLayout->addWidget(uiWindow, 0);  // 视频在上、控制区在下，窗口改大小时由布局分配
 
-    // 定位UI窗口到主窗口底部
+    // 面板由布局管理，不再需要手动定位；保留这个空实现是为了不牵动其他调用点
     auto positionUIWindow = [&]() {
-        if (!uiWindow->isVisible()) return;
-        int totalH = UI_TOTAL_HEIGHT + (playlistPanel->isVisible() ? playlistPanel->height() : 0);
-        QPoint globalPos = window.mapToGlobal(QPoint(0, window.height() - totalH));
-        uiWindow->setGeometry(globalPos.x(), globalPos.y(), window.width(), totalH);
         positionSubtitle();  // 同步更新字幕位置
     };
 
@@ -647,28 +645,17 @@ int main(int argc, char *argv[])
     QTimer *hideDelayTimer = new QTimer(&window);
     hideDelayTimer->setSingleShot(true);
     QObject::connect(hideDelayTimer, &QTimer::timeout, [&]() {
-        if (uiWindow->windowOpacity() < 0.1) uiWindow->hide();
+        // 只有全屏才自动隐藏控制区：窗口模式下把它藏了，视频会突然变高，很跳
+        if (window.isFullScreen()) uiWindow->hide();
     });
-
-    QPropertyAnimation *fadeAnim = new QPropertyAnimation(uiWindow, "windowOpacity");
-    fadeAnim->setDuration(200);
-    fadeAnim->setEasingCurve(QEasingCurve::InOutQuad);
 
     auto showUI = [&]() {
         hideDelayTimer->stop();  // 取消待执行的隐藏
         uiWindow->show();
         positionUIWindow();
-        fadeAnim->stop();
-        fadeAnim->setStartValue(uiWindow->windowOpacity());
-        fadeAnim->setEndValue(1.0);
-        fadeAnim->start();
     };
     auto hideUI = [&]() {
-        fadeAnim->stop();
-        fadeAnim->setStartValue(uiWindow->windowOpacity());
-        fadeAnim->setEndValue(0.0);
-        fadeAnim->start();
-        hideDelayTimer->start(220);  // 渐变结束后隐藏，可被showUI取消
+        hideDelayTimer->start(400);
     };
 
     QObject::connect(hideTimer, &QTimer::timeout, [&]() {
@@ -676,12 +663,12 @@ int main(int argc, char *argv[])
     });
 
     auto enterFullScreen = [&]() {
-        uiWindow->hide();
         window.showFullScreen();
+        window.raise();
+        window.activateWindow();
         QTimer::singleShot(200, [&]() {
             if (window.isFullScreen()) {
                 positionUIWindow();
-                uiWindow->show();
                 hideTimer->start(2500);
             }
         });
