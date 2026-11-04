@@ -110,6 +110,34 @@ int main(int argc, char *argv[])
     mainLayout->addWidget(videoWidget, 1);
     window.setCentralWidget(central);
 
+    // ===== Layer 1：空态（未加载视频时替换视频区显示） =====
+    // 视频容器是原生子窗口，空态是普通 QWidget，二者互斥显示（隐藏一个、显示另一个）。
+    QWidget *emptyState = new QWidget(central);
+    emptyState->setStyleSheet("background-color: rgb(18,18,18);");
+    QVBoxLayout *emptyLayout = new QVBoxLayout(emptyState);
+    emptyLayout->setAlignment(Qt::AlignCenter);
+    emptyLayout->setSpacing(14);
+    QLabel *emptyIcon = new QLabel(QString::fromUtf8("🎬"), emptyState);
+    emptyIcon->setAlignment(Qt::AlignCenter);
+    emptyIcon->setStyleSheet("font-size:64px;background:transparent;");
+    QLabel *emptyTitle = new QLabel(QString::fromUtf8("把视频拖进来，开始播放"), emptyState);
+    emptyTitle->setAlignment(Qt::AlignCenter);
+    emptyTitle->setStyleSheet("color:#dddddd;font-size:18px;font-weight:bold;background:transparent;");
+    QLabel *emptyHint = new QLabel(QString::fromUtf8("支持常见格式 · 离线 AI 字幕 · 实时翻译"), emptyState);
+    emptyHint->setAlignment(Qt::AlignCenter);
+    emptyHint->setStyleSheet("color:#777777;font-size:12px;background:transparent;");
+    QPushButton *emptyOpenBtn = new QPushButton(QString::fromUtf8("打开视频"), emptyState);
+    emptyOpenBtn->setFixedSize(120, 36);
+    emptyOpenBtn->setStyleSheet("QPushButton{color:white;background:#0078d4;border:none;border-radius:6px;font-size:14px;}"
+                                "QPushButton:hover{background:#1a86e0;}");
+    emptyLayout->addWidget(emptyIcon);
+    emptyLayout->addWidget(emptyTitle);
+    emptyLayout->addWidget(emptyHint);
+    emptyLayout->addSpacing(6);
+    emptyLayout->addWidget(emptyOpenBtn, 0, Qt::AlignHCenter);
+    mainLayout->addWidget(emptyState, 1);
+    videoWidget->hide();  // 初始显示空态
+
     const int CONTROL_HEIGHT = 50;
     const int SETTINGS_HEIGHT = 36;
 
@@ -371,6 +399,29 @@ int main(int argc, char *argv[])
     };
 
     PlayerController *player = new PlayerController(&window);
+
+    // ===== Layer 1：空态/视频区切换 + 窗口几何记忆 =====
+    // 播放列表为空 → 显示空态；否则显示视频区。openBtn 也触发空态里的"打开视频"。
+    auto updateEmptyState = [&]() {
+        const bool hasVideo = !player->playlist().isEmpty();
+        emptyState->setVisible(!hasVideo);
+        videoWidget->setVisible(hasVideo);
+    };
+    updateEmptyState();
+    QObject::connect(player, &PlayerController::playlistChanged, &window, [&]() { updateEmptyState(); });
+    QObject::connect(emptyOpenBtn, &QPushButton::clicked, openBtn, &QPushButton::click);
+
+    // 记住窗口几何（首次启动无记录则用默认大小）
+    QSettings windowSettings("MediaPlayer", "Config");
+    const QByteArray savedGeometry = windowSettings.value(QStringLiteral("window/geometry")).toByteArray();
+    if (!savedGeometry.isEmpty()) {
+        window.restoreGeometry(savedGeometry);
+    } else {
+        window.resize(1200, 700);
+    }
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &window, [&]() {
+        windowSettings.setValue(QStringLiteral("window/geometry"), window.saveGeometry());
+    });
 
     // 便携配置：<exe>/MediaPlayer.ini 的 [ai] 段可覆盖模型路径，优先于注册表
     AppPaths::setConfigFile(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("MediaPlayer.ini")));
