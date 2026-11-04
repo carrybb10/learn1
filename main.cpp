@@ -100,19 +100,37 @@ int main(int argc, char *argv[])
 
     QWidget *central = new QWidget(&window);
     central->setStyleSheet("background-color: black;");
-    QVBoxLayout *mainLayout = new QVBoxLayout(central);
+    QHBoxLayout *mainLayout = new QHBoxLayout(central);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
+    // 左侧窄设置栏（Layer 1 骨架：类似 DeepSeek Harness / 微信的「左栏 + 右内容」）
+    QWidget *leftSidebar = new QWidget(central);
+    leftSidebar->setFixedWidth(200);
+    leftSidebar->setStyleSheet("background-color: rgb(24,24,24);");
+    QVBoxLayout *sidebarLayout = new QVBoxLayout(leftSidebar);
+    sidebarLayout->setContentsMargins(12, 16, 12, 12);
+    sidebarLayout->setSpacing(10);
+
+    // 右侧内容区：视频 / 空态（互斥）+ 底部控制栏
+    QWidget *rightArea = new QWidget(central);
+    rightArea->setStyleSheet("background-color: black;");
+    QVBoxLayout *rightLayout = new QVBoxLayout(rightArea);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(0);
+
     VideoWidget *videoWindow = new VideoWidget();
-    QWidget *videoWidget = QWidget::createWindowContainer(videoWindow, central);
+    QWidget *videoWidget = QWidget::createWindowContainer(videoWindow, rightArea);
     videoWidget->setStyleSheet("background-color: black;");
-    mainLayout->addWidget(videoWidget, 1);
+    rightLayout->addWidget(videoWidget, 1);
+
+    mainLayout->addWidget(leftSidebar, 0);
+    mainLayout->addWidget(rightArea, 1);
     window.setCentralWidget(central);
 
     // ===== Layer 1：空态（未加载视频时替换视频区显示） =====
     // 视频容器是原生子窗口，空态是普通 QWidget，二者互斥显示（隐藏一个、显示另一个）。
-    QWidget *emptyState = new QWidget(central);
+    QWidget *emptyState = new QWidget(rightArea);
     emptyState->setStyleSheet("background-color: rgb(18,18,18);");
     QVBoxLayout *emptyLayout = new QVBoxLayout(emptyState);
     emptyLayout->setAlignment(Qt::AlignCenter);
@@ -135,95 +153,92 @@ int main(int argc, char *argv[])
     emptyLayout->addWidget(emptyHint);
     emptyLayout->addSpacing(6);
     emptyLayout->addWidget(emptyOpenBtn, 0, Qt::AlignHCenter);
-    mainLayout->addWidget(emptyState, 1);
+    rightLayout->addWidget(emptyState, 1);
     videoWidget->hide();  // 初始显示空态
 
     const int CONTROL_HEIGHT = 50;
-    const int SETTINGS_HEIGHT = 36;
 
-    // ===== 底部 UI 面板：设置栏 + 播放列表 + 控制栏，作为布局里的一行 =====
+    // ===== 底部 UI 面板：播放列表 + 控制栏 =====
     // 视频是 QWidget::createWindowContainer 包出来的原生子窗口，原生窗口总是盖在普通
     // QWidget 兄弟之上，所以控制栏不能叠在视频上，只能排在视频下方。
-    QWidget *uiWindow = new QWidget(central);
+    QWidget *uiWindow = new QWidget(rightArea);
     uiWindow->setStyleSheet("background-color: rgb(30,30,30);");
     QVBoxLayout *uiLayout = new QVBoxLayout(uiWindow);
     uiLayout->setContentsMargins(0, 0, 0, 0);
     uiLayout->setSpacing(0);
 
-    // 设置栏
-    QWidget *settingsBar = new QWidget(uiWindow);
-    settingsBar->setFixedHeight(SETTINGS_HEIGHT);
-    QHBoxLayout *settingsLayout = new QHBoxLayout(settingsBar);
-    settingsLayout->setContentsMargins(12, 0, 12, 0);
-    settingsLayout->setSpacing(8);
+    // ===== 左侧设置栏（竖排，类似微信/DeepSeek Harness 的左栏） =====
+    QLabel *sidebarTitle = new QLabel(QStringLiteral("MediaPlayer"), leftSidebar);
+    sidebarTitle->setStyleSheet("color:#ffffff;font-size:16px;font-weight:bold;padding-bottom:6px;");
+    sidebarLayout->addWidget(sidebarTitle);
 
-    QLabel *hwLabel = new QLabel("硬件解码", settingsBar);
+    // 硬件解码：标签 + 下拉
+    QLabel *hwLabel = new QLabel(QStringLiteral("硬件解码"), leftSidebar);
     hwLabel->setStyleSheet("color:#bbbbbb;font-size:12px;");
-    QComboBox *hwCombo = new QComboBox(settingsBar);
-    hwCombo->addItem("自动 (D3D11VA)", 1);
-    hwCombo->addItem("关闭 (纯软件)", 0);
-    hwCombo->setFixedWidth(140);
-    hwCombo->setStyleSheet("QComboBox{color:white;background:#3a3a3a;border:none;padding:2px 6px;}QComboBox QAbstractItemView{color:white;background:#3a3a3a;selection-background-color:#0078d4;}");
+    QComboBox *hwCombo = new QComboBox(leftSidebar);
+    hwCombo->addItem(QStringLiteral("自动 (D3D11VA)"), 1);
+    hwCombo->addItem(QStringLiteral("关闭 (纯软件)"), 0);
+    hwCombo->setStyleSheet("QComboBox{color:white;background:#3a3a3a;border:none;padding:4px 8px;}QComboBox QAbstractItemView{color:white;background:#3a3a3a;selection-background-color:#0078d4;}");
+    sidebarLayout->addWidget(hwLabel);
+    sidebarLayout->addWidget(hwCombo);
 
-    settingsLayout->addWidget(hwLabel);
-    settingsLayout->addWidget(hwCombo);
-    settingsLayout->addStretch(1);
-
-    // 字幕开关（突出显示）
-    QPushButton *subtitleToggle = new QPushButton("字幕", settingsBar);
-    subtitleToggle->setFixedSize(56, 24);
-    subtitleToggle->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#4a4a4a;}");
+    // 字幕开关
+    QPushButton *subtitleToggle = new QPushButton(QStringLiteral("字幕"), leftSidebar);
+    subtitleToggle->setFixedHeight(28);
+    subtitleToggle->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:12px;text-align:left;padding-left:10px;}QPushButton:hover{background:#4a4a4a;}");
     subtitleToggle->setCheckable(true);
-    settingsLayout->addWidget(subtitleToggle);
+    sidebarLayout->addWidget(subtitleToggle);
 
-    // 选择字幕文件（精简小按钮）
-    QPushButton *subtitleFileBtn = new QPushButton("...", settingsBar);
-    subtitleFileBtn->setFixedSize(28, 24);
-    subtitleFileBtn->setStyleSheet("QPushButton{color:#999999;background:#333333;border:none;border-radius:3px;font-size:12px;font-weight:bold;}QPushButton:hover{background:#444444;color:#cccccc;}");
-    subtitleFileBtn->setToolTip("选择字幕文件");
-    settingsLayout->addWidget(subtitleFileBtn);
+    // 选择字幕文件
+    QPushButton *subtitleFileBtn = new QPushButton(QStringLiteral("选择字幕文件"), leftSidebar);
+    subtitleFileBtn->setFixedHeight(28);
+    subtitleFileBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:12px;text-align:left;padding-left:10px;}QPushButton:hover{background:#4a4a4a;}");
+    subtitleFileBtn->setToolTip(QStringLiteral("选择字幕文件"));
+    sidebarLayout->addWidget(subtitleFileBtn);
 
-    settingsLayout->addStretch();
-
-    // 播放列表切换按钮
-    QPushButton *playlistBtn = new QPushButton("列表", settingsBar);
-    playlistBtn->setFixedSize(56, 24);
-    playlistBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#4a4a4a;}");
+    // 播放列表
+    QPushButton *playlistBtn = new QPushButton(QStringLiteral("播放列表"), leftSidebar);
+    playlistBtn->setFixedHeight(28);
+    playlistBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:12px;text-align:left;padding-left:10px;}QPushButton:hover{background:#4a4a4a;}");
     playlistBtn->setCheckable(true);
-    settingsLayout->addWidget(playlistBtn);
+    sidebarLayout->addWidget(playlistBtn);
 
-    // AI识别按钮（T4.8验证用）
-    QPushButton *aiBtn = new QPushButton("AI识别", settingsBar);
-    aiBtn->setFixedSize(64, 24);
-    aiBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#4a4a4a;}");
-    aiBtn->setToolTip("开启/停止AI语音识别字幕");
-    settingsLayout->addWidget(aiBtn);
+    // AI识别
+    QPushButton *aiBtn = new QPushButton(QStringLiteral("AI识别"), leftSidebar);
+    aiBtn->setFixedHeight(28);
+    aiBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:12px;text-align:left;padding-left:10px;}QPushButton:hover{background:#4a4a4a;}");
+    aiBtn->setToolTip(QStringLiteral("开启/停止AI语音识别字幕"));
+    sidebarLayout->addWidget(aiBtn);
 
-    // 实时字幕：边播边出字（环形缓冲 -> VAD -> whisper -> 翻译）
-    QPushButton *rtBtn = new QPushButton("实时字幕", settingsBar);
-    rtBtn->setFixedSize(64, 24);
-    rtBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#4a4a4a;}");
-    rtBtn->setToolTip("开启/停止实时字幕（播放中边播边识别）");
-    settingsLayout->addWidget(rtBtn);
+    // 实时字幕
+    QPushButton *rtBtn = new QPushButton(QStringLiteral("实时字幕"), leftSidebar);
+    rtBtn->setFixedHeight(28);
+    rtBtn->setStyleSheet("QPushButton{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:12px;text-align:left;padding-left:10px;}QPushButton:hover{background:#4a4a4a;}");
+    rtBtn->setToolTip(QStringLiteral("开启/停止实时字幕（播放中边播边识别）"));
+    sidebarLayout->addWidget(rtBtn);
 
-    // AI翻译目标语言选择（T4.8）
-    QComboBox *translateLangCombo = new QComboBox(settingsBar);
-    translateLangCombo->setFixedSize(72, 24);
-    translateLangCombo->setStyleSheet("QComboBox{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:11px;padding-left:4px;}QComboBox::drop-down{border:none;width:16px;}QComboBox QAbstractItemView{background:#2a2a2a;color:#cccccc;selection-background-color:#0078d4;}");
-    translateLangCombo->addItem("原文", "original");
-    translateLangCombo->addItem("中文", "中文");
-    translateLangCombo->addItem("英语", "英语");
-    translateLangCombo->addItem("日语", "日语");
-    translateLangCombo->addItem("韩语", "韩语");
-    translateLangCombo->setToolTip("AI识别后翻译目标语言");
-    settingsLayout->addWidget(translateLangCombo);
+    // 翻译语言
+    QLabel *langLabel = new QLabel(QStringLiteral("翻译语言"), leftSidebar);
+    langLabel->setStyleSheet("color:#bbbbbb;font-size:12px;");
+    QComboBox *translateLangCombo = new QComboBox(leftSidebar);
+    translateLangCombo->setStyleSheet("QComboBox{color:#cccccc;background:#3a3a3a;border:none;border-radius:3px;font-size:12px;padding-left:4px;}QComboBox::drop-down{border:none;width:16px;}QComboBox QAbstractItemView{background:#2a2a2a;color:#cccccc;selection-background-color:#0078d4;}");
+    translateLangCombo->addItem(QStringLiteral("原文"), QStringLiteral("original"));
+    translateLangCombo->addItem(QStringLiteral("中文"), QStringLiteral("中文"));
+    translateLangCombo->addItem(QStringLiteral("英语"), QStringLiteral("英语"));
+    translateLangCombo->addItem(QStringLiteral("日语"), QStringLiteral("日语"));
+    translateLangCombo->addItem(QStringLiteral("韩语"), QStringLiteral("韩语"));
+    translateLangCombo->setToolTip(QStringLiteral("AI识别后翻译目标语言"));
+    sidebarLayout->addWidget(langLabel);
+    sidebarLayout->addWidget(translateLangCombo);
 
-    // 关于按钮
-    QPushButton *aboutBtn = new QPushButton("关于", settingsBar);
-    aboutBtn->setFixedSize(56, 24);
-    aboutBtn->setStyleSheet("QPushButton{color:#999999;background:#333333;border:none;border-radius:3px;font-size:11px;}QPushButton:hover{background:#444444;color:#cccccc;}");
-    aboutBtn->setToolTip("关于本软件与开源许可");
-    settingsLayout->addWidget(aboutBtn);
+    sidebarLayout->addStretch(1);
+
+    // 关于
+    QPushButton *aboutBtn = new QPushButton(QStringLiteral("关于"), leftSidebar);
+    aboutBtn->setFixedHeight(28);
+    aboutBtn->setStyleSheet("QPushButton{color:#999999;background:#333333;border:none;border-radius:3px;font-size:12px;text-align:left;padding-left:10px;}QPushButton:hover{background:#444444;color:#cccccc;}");
+    aboutBtn->setToolTip(QStringLiteral("关于本软件与开源许可"));
+    sidebarLayout->addWidget(aboutBtn);
 
     // 可拖动字幕标签类
     class DraggableLabel : public QLabel {
@@ -388,10 +403,9 @@ int main(int argc, char *argv[])
     plLayout->addLayout(plBtnLayout);
     playlistPanel->hide();
 
-    uiLayout->addWidget(settingsBar);
     uiLayout->addWidget(playlistPanel);
     uiLayout->addWidget(controlBar);
-    mainLayout->addWidget(uiWindow, 0);  // 视频在上、控制区在下，窗口改大小时由布局分配
+    rightLayout->addWidget(uiWindow, 0);  // 视频在上、控制区在下，窗口改大小时由布局分配
 
     // 面板由布局管理，不再需要手动定位；保留这个空实现是为了不牵动其他调用点
     auto positionUIWindow = [&]() {
