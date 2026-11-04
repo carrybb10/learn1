@@ -3,6 +3,7 @@
 #include "AppPaths.h"
 #include "BatchSubtitlePipeline.h"
 #include "RealtimeSubtitleWorker.h"
+#include "SplashWindow.h"
 #include <QMainWindow>
 #include <QWidget>
 #include <QVBoxLayout>
@@ -416,6 +417,31 @@ int main(int argc, char *argv[])
         LOG_INFO(LogModule::AI_MT, "translator model load finished, ok=%d", ok ? 1 : 0);
         if (!ok) LOG_WARN(LogModule::AI_MT, "translator model load failed: %s", err.toUtf8().constData());
     }, Qt::QueuedConnection);
+
+    // ===== Layer 0：启动 Splash（Logo + 波浪进度条） =====
+    // 进度按「界面就绪 → whisper → translator」推进；模型缺失则该步不计入总步数
+    SplashWindow *splash = new SplashWindow();
+    const int pendingModels = (whisperModelPath.isEmpty() ? 0 : 1) +
+                              (translatorModelPath.isEmpty() ? 0 : 1);
+    int settledModels = 0;
+    auto advanceSplash = [splash, pendingModels, &settledModels](const QString &stage) {
+        ++settledModels;
+        const int totalSteps = pendingModels + 1;  // +1 = 界面就绪
+        const double frac = 0.10 + 0.90 * (settledModels / double(totalSteps));
+        splash->setProgress(frac);
+        splash->setStage(stage);
+        if (settledModels >= totalSteps) {
+            splash->finishAndClose();
+        }
+    };
+    QObject::connect(whisper, &WhisperTranscriber::modelLoaded, splash,
+                     [advanceSplash](bool, const QString &) {
+                         advanceSplash(QStringLiteral("语音识别模型就绪"));
+                     }, Qt::QueuedConnection);
+    QObject::connect(translator, &Translator::modelLoaded, splash,
+                     [advanceSplash](bool, const QString &) {
+                         advanceSplash(QStringLiteral("翻译模型就绪"));
+                     }, Qt::QueuedConnection);
 
     // ===== 实时字幕工作线程 =====
     RealtimeSubtitleWorker *rtWorker = new RealtimeSubtitleWorker();
@@ -1170,9 +1196,17 @@ int main(int argc, char *argv[])
     });
     mouseTimer->start(200);
 
+    splash->setStage(QStringLiteral("正在初始化界面"));
+    splash->setProgress(0.10);
+    if (QScreen *sc = QGuiApplication::primaryScreen()) {
+        splash->move(sc->geometry().center() - splash->rect().center());
+    }
+    splash->show();
     window.show();
     uiWindow->show();
     QTimer::singleShot(50, positionUIWindow);
+    // 界面就绪（Splash 第 1 步），随后模型就绪信号继续推进
+    QTimer::singleShot(120, [advanceSplash]() { advanceSplash(QStringLiteral("界面就绪")); });
 
     // 延迟安装 CrashHandler：等待D3D11初始化完成，避免捕获驱动层预期异常
     QTimer::singleShot(1000, []() {
