@@ -1202,16 +1202,19 @@ int main(int argc, char *argv[])
         splash->move(sc->geometry().center() - splash->rect().center());
     }
     splash->show();
-    window.show();
-    uiWindow->show();
-    QTimer::singleShot(50, positionUIWindow);
     // 界面就绪（Splash 第 1 步），随后模型就绪信号继续推进
     QTimer::singleShot(120, [advanceSplash]() { advanceSplash(QStringLiteral("界面就绪")); });
 
-    // 延迟安装 CrashHandler：等待D3D11初始化完成，避免捕获驱动层预期异常
-    QTimer::singleShot(1000, []() {
-        CrashHandler::install();
-        LOG_INFO(LogModule::CRASH, "Crash handler installed after D3D11 init");
+    // 加载完成、Splash 淡出后才弹主窗口（不叠加，只显示加载窗）
+    QObject::connect(splash, &SplashWindow::finished, &window, [&]() {
+        window.show();
+        uiWindow->show();
+        positionUIWindow();
+        // 延迟安装 CrashHandler：等待D3D11初始化完成，避免捕获驱动层预期异常
+        QTimer::singleShot(1000, []() {
+            CrashHandler::install();
+            LOG_INFO(LogModule::CRASH, "Crash handler installed after D3D11 init");
+        });
     });
 
     return app.exec();

@@ -28,7 +28,10 @@ SplashWindow::SplashWindow(QWidget *parent)
     m_fade->setDuration(Anim::SplashFadeMs);
     m_fade->setStartValue(1.0);
     m_fade->setEndValue(0.0);
-    connect(m_fade, &QPropertyAnimation::finished, this, &QWidget::close);
+    connect(m_fade, &QPropertyAnimation::finished, this, [this] {
+        emit finished();
+        close();
+    });
 }
 
 SplashWindow::~SplashWindow() = default;

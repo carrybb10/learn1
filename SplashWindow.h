@@ -19,6 +19,10 @@ public:
     // 淡出后自动关闭
     void finishAndClose();
 
+signals:
+    // 淡出完成、即将关闭时发出（主程序用它来"关闭加载窗 → 弹主窗口"）
+    void finished();
+
 protected:
     void paintEvent(QPaintEvent *e) override;
 
