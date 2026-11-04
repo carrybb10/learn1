@@ -1,12 +1,13 @@
 # PROGRESS
 
-> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-11-03（v0.6.1：控制栏改为窗口内布局行，去掉浮动 UI 窗口）
+> 本文件是唯一可原地覆盖的进度文档。最后更新：2026-11-04（v0.6.2：UI 重构 Layer 0/1 —— 启动 Splash + 左侧设置栏 + 右侧内容区骨架）
 
 ## 版本线
 
 | v0.6.1 | 2026-11-03 | 控制栏从浮动窗口改为窗口内布局行；修复全屏/多显示器错位 |
 | tag | 内容 |
 |---|---|
+| `v0.6.2` | 2026-11-04 | UI Layer 0/1：启动 Splash（Logo 占位 + 波浪进度条 + 模型加载进度）、只显加载窗淡出后弹主窗；左侧设置栏 + 右侧内容区骨架 + 空态引导 + 记住窗口几何 |
 | `v0.4.0` | M1–M4 基线入库（可直接编译运行的原型） |
 | `v0.4.1` | 崩溃可诊断 + 三处生命周期/同步缺陷（见下） |
 | `v0.4.2` | 翻译链路改用模型自带对话模板 + 无 GUI 回归工具 |
@@ -99,45 +100,50 @@
 8. **停止时线程归属警告**：`rt_cli` 与 GUI 退出偶现 `QObject::killTimer: Timers cannot be stopped from another thread` —— `requestStop()` 投递到 worker 线程的 `stop` 没有按预期执行，待查（不影响结果，但属于未定义行为）。
 9. **VAD 与 ASR 在同一线程串行**：`lag` 里有一部分是排队时间；把 VAD 拆到独立线程或做流水线是 M6 的优化项。
 
-## 待决策：UI 重构路线（2026-11-03 暂停点）
+## UI 重构：已决策 + 进度（2026-11-04 更新）
 
-今天完成了 UI 重构的第一步（v0.6.1：控制栏从浮动窗口改为窗口内布局行），并调研了
-Windows / Apple / mpv / IINA / VLC 4 / Telegram 的桌面 UI 做法。剩余工作分三条路线，
-**尚未选择**，下次开工先定这个再动代码：
-
-| 路线 | 内容 | 估算 | 落地后果 |
-|---|---|---|---|
-| A | Widgets 分层 + 动效 + 多级菜单 + Splash | ~142K tokens / 4–6 天 | 控制栏仍占一行，但观感接近成熟播放器 |
-| B | 先换 `QRhiWidget` 再重写 UI | +80–120K / 总计 2–3 周 | 控制栏可真正浮在画面上 |
-| C | 只做 P0（token）+ P3（悬停动效）+ P4（菜单） | ~73K | 界面结构不动，只拿动效与菜单 |
+用户（m04472/m06057）确认走 **B 路线**（最终换 `QRhiWidget` 让 UI 真正浮在视频上），
+并按 8 条视觉目标排了 7 层 + 1 条主题主线的大纲，存档在 `docs/UI_PLAN.md`。
+关键策略：**UI 外壳（Layer 0/1/7）先做，与 RHI 解耦**——先用 `createWindowContainer`
+实现跑通，视频表面抽象成 `VideoSurface` 接口，后面换 `QRhiWidget` 实现时 UI 层不动。
 
 已确认的架构约束（不要再重复验证）：
 - 视频是 `QWidget::createWindowContainer` 的原生子窗口，**任何 QWidget 兄弟都盖不住它**；
-  想叠加 UI 只能换 `QRhiWidget`（Qt 6.12 自带 D3D11 后端）。
-- 子控件不支持 `windowOpacity`，动效只能用 `pos/opacity` 或 `QGraphicsOpacityEffect`。
+  想叠加 UI 只能换 `QRhiWidget`（Qt 6.12 自带 D3D11 后端）。所以现在的"左侧栏/底部控制栏"
+  都是布局里的兄弟，不是叠在视频上。
+- 无边框全窗口（用户问过"后期能否像微信/bilibili 那样无原生窗口"）：能，`Qt::FramelessWindowHint`
+  + 自绘标题栏 + DWM 圆角/阴影/Mica，但要自实现拖拽/缩放/贴边，留到 Layer 4 做。
 
-关键参考（调研结论已存进对话，代码侧未改动）：
-- Windows 11 圆角：控件 4px、浮层 8px。
-- mpv `osc.lua` 的控制栏状态机（hidden/shown/timed，暂停常显，拖动禁用自动隐藏）。
-- IINA 1.5：主界面做减法、设置进侧栏 Inspector。
-- 多级菜单：设置面板二级页 + `Ctrl+K` 命令面板，最多三级。
+Layer 进度：
+- ✅ Layer 0（v0.6.2 部分）：`SplashWindow`（Logo 占位 + 波浪进度条 + 模型加载进度）；
+  启动只显加载窗，加载完淡出（180ms）自动关闭再弹主窗（`main.cpp` 的 `SplashWindow::finished` 回调里 show）。
+- ✅ Layer 1 骨架（v0.6.2）：左侧 200px 设置栏（硬件解码/字幕/选择字幕文件/播放列表/AI识别/实时字幕/翻译语言/关于 竖排）
+  + 右侧内容区（视频/空态互斥 + 底部控制栏）；空态引导"把视频拖进来开始播放" + 记住窗口几何。
+- ⏳ Layer 1 收尾：记住上次文件 + 播放位置。
+- ⏳ Layer 2：拖放毛玻璃提示。
+- ⏳ Layer 3：`VideoSurface` 接口 + `QRhiWidget` 竖切片（风险最高，最后做）。
+- ⏳ Layer 4：播放 Chrome 状态机 + 无边框窗口 + 字幕背板。
+- ⏳ Layer 5/6/7 + 主题：设置菜单 / 插件化 / 错误弹窗错误码 / 三套配色 + 自选背景图。
+
+`Theme.h`（设计 token）、`Animation.h`（动效时长）已建，后续组件统一引用。
 
 ## 下一步（按顺序，做完一条再动下一条）
 
-1. **M6-a 真实片源回归**：用 `-Gpu` 包整集看一遍，记录"哪几句还是看不懂"，区分识别错（人名/术语/漏词）与译文错（语序/语气）；同时验证上下文翻译（T6.4）是否真的改善了跨句指代。
-2. ~~**M6-b 上下文翻译（T6.4）**~~ — 已在 v0.5.9 完成（见上）。
-3. **M6-c GUI 延迟打点（T6.5）**：把 `lag` 显示到字幕面板或诊断面板，替代现在只能看日志。
-4. **M6 收尾**：修 `killTimer` 线程归属、VAD 与 ASR 解耦、补 `あくび` 那类准确率约束。
-5. **UI 重构（进行中）**：v0.6.1 已把控制栏从浮动窗口改为窗口内布局行；剩余可选项——字幕悬浮窗同样并入主窗口、设置项分组折叠、快捷键提示。
+1. **Layer 1 收尾**：记住上次文件 + 播放位置（QSettings）。
+2. **Layer 2 拖放**：`dragEnter` 全窗口毛玻璃 + 提示语，`drop` 校验扩展名、多文件进播放列表。
+3. **Layer 4 无边框 + 播放 Chrome**：`Qt::FramelessWindowHint` + 自绘标题栏（拖拽/最小化/最大化/关闭）+ 控制栏状态机（悬停显示、暂停常显）。
+4. **Layer 3 RHI 竖切片**（风险最高，做完上面再动）：`VideoSurface` 接口 → `QRhiWidget` 实现，让 UI 真正浮在视频上。
+5. **M6 收尾**：修 `killTimer` 线程归属、VAD 与 ASR 解耦、补 `あくび` 那类准确率约束、GUI 延迟打点（T6.5）。
 6. **M5 补测**：计划点名的 6 组单测（`avToSdlFormat`/音量缩放/seek 换算/时钟插值/WAV 头/播放列表）+ 2 小时长跑 + 内存基线。
-7. 拆文件仍登记为技术债 D-01，按需抽取（触发条件见 `docs/REFACTOR_PLAN.md`）。
+7. 拆文件（D-01）：`main.cpp` 1290 行单文件，改 UI 时已两次因内存吃紧编译失败（`0x800705AF`），建议 UI 骨架稳定后优先抽 `MainWindow` 类。
 
-## 收尾检查点（2026-10-28）
+## 收尾检查点（2026-11-04，交接给新对话）
 
-- 当前版本 `v0.5.9`，`HEAD = 3bf5e5d`，已推送；CI run #15 success；工作区干净。
-- 今天产出的包：`MediaPlayer-v0.5.9-win64.zip`（79.3MB）、`MediaPlayer-v0.5.9-win64-cuda.zip`（678.7MB）。
-- 正在用的 GPU 测试目录：`D:\new\test\MediaPlayer-gpu\`（exe 已是 v0.5.9，`MediaPlayer.ini` 指向 turbo + Q8 + silero）。
-- 源码快照：`D:\new\_backup\Player_src_v0.5.9_20261028.zip`；全量备份 `Player_20261025_1717` 未动。
-- 明天从"下一步"第 1 条开始：先看片收集问题，再决定 M6-c（延迟打点）与 M6 收尾的先后。
-- 回归素材：`D:\new\test\gc30.wav`（30s 日语片段，用于 `rt_cli` 对照）。
+- 当前版本 `v0.6.2`，工作区干净；HEAD = `3c2dc48`（UI 左栏骨架）及后续 commit。
+- 今天产出：Layer 0 Splash（`aea414c`/`1b62284`）+ Layer 1 空态（`23b18f3`）+ Layer 1 左栏骨架（`3c2dc48`）。
+- 正在用的 GPU 测试目录：`D:\new\test\MediaPlayer-gpu\`（exe 已是 v0.6.2 左栏版，`MediaPlayer.ini` 指向 turbo + Q8 + silero）。
+- 源码快照：`D:\new\_backup\`（全量 `Player_20261025_1717` 未动；git archive 快照随版本补）。
+- 新对话从「下一步」第 1 条开始：**Layer 1 收尾（记住上次文件 + 播放位置）**。
+- 回归素材：`D:\new\test\gc30.wav`（30s 日语片段，`rt_cli` 对照）、`C:\Users\carry\DeskBox\我的桌面\GuiltyCrown_clip_4m50_30s.mp4`（预翻译/实时字幕对照）。
+- 重要环境提醒：改 `main.cpp`（1290 行 god function）编译时机器可能内存吃紧报 `0x800705AF 页面文件太小`，先把残留 `MediaPlayer.exe`/`cl.exe` 进程杀掉、`-j 2` 再编；这是 D-01 拆文件的直接动因。
 
